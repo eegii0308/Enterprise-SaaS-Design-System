@@ -66,6 +66,15 @@ types/
 - Mock data should live in fixtures only and should not be mixed with production components.
 - Page components should compose smaller components instead of owning all UI logic directly.
 
+## Localization
+
+- Supported languages: English and Mongolian.
+- Default locale: Mongolian.
+- Translation files live in `locales/en.json` and `locales/mn.json`.
+- User-facing text should be routed through the shared translation helper in `lib/i18n.ts` instead of being hardcoded in components or pages.
+- When adding new UI text, add a new translation key to both locale files and use the same key in the codebase so the app stays consistent across languages.
+- Keep placeholders and interpolation values explicit, and prefer descriptive translation keys over ad hoc string literals.
+
 ## State Management
 
 Use simple state boundaries:

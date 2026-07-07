@@ -1,6 +1,7 @@
 import { ArrowLeftRight, Building2, CheckCircle2, FileText, ShieldCheck, Upload, Users } from "lucide-react";
 import { logoutAction } from "@/lib/auth/actions";
 import { requireSession } from "@/lib/permissions/authorize";
+import { t } from "@/lib/i18n";
 import { fixedRoleLabels, rolePermissions } from "@/lib/permissions/roles";
 import { Button } from "@/src/app/components/ui/button";
 import type { RoleName } from "@/types/permissions";
@@ -18,13 +19,13 @@ export default async function DashboardPage() {
               <Building2 size={20} aria-hidden="true" />
             </div>
             <div>
-              <p className="font-bold text-slate-900">E-Reconcile MN</p>
+              <p className="font-bold text-slate-900">{t("app.name")}</p>
               <p className="text-xs text-slate-500">{session.organizationName}</p>
             </div>
           </div>
           <form action={logoutAction}>
             <Button type="submit" variant="outline">
-              Sign out
+              {t("actions.signOut")}
             </Button>
           </form>
         </div>
@@ -32,18 +33,18 @@ export default async function DashboardPage() {
 
       <section className="p-6 space-y-6">
         <div className="flex flex-col gap-1">
-          <h1 className="text-xl font-bold text-slate-900">Dashboard</h1>
+          <h1 className="text-xl font-bold text-slate-900">{t("navigation.dashboard")}</h1>
           <p className="text-sm text-slate-500">
-            Signed in as {session.fullName} with {fixedRoleLabels[roleName]} access.
+            {t("dashboard.signedInAs", { name: session.fullName, role: fixedRoleLabels[roleName] })}
           </p>
         </div>
 
         <div className="grid gap-4 md:grid-cols-4">
           {[
-            { label: "Organization", value: session.organizationName, icon: Building2 },
-            { label: "Active role", value: fixedRoleLabels[roleName], icon: ShieldCheck },
-            { label: "Permissions", value: rolePermissions[roleName].length.toString(), icon: CheckCircle2 },
-            { label: "Phase", value: "Tenant foundation", icon: ArrowLeftRight },
+            { label: t("dashboard.organization"), value: session.organizationName, icon: Building2 },
+            { label: t("dashboard.activeRole"), value: fixedRoleLabels[roleName], icon: ShieldCheck },
+            { label: t("dashboard.permissions"), value: rolePermissions[roleName].length.toString(), icon: CheckCircle2 },
+            { label: t("dashboard.phase"), value: t("dashboard.tenantFoundation"), icon: ArrowLeftRight },
           ].map((item) => (
             <article key={item.label} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
               <div className="flex items-center justify-between">
@@ -58,18 +59,18 @@ export default async function DashboardPage() {
         <div className="grid gap-4 lg:grid-cols-3">
           {[
             {
-              title: "Import transactions",
-              description: "CSV/XLSX import will attach to this organization context in Phase 2.",
+              title: t("dashboard.importTransactions"),
+              description: t("dashboard.importTransactionsDescription"),
               icon: Upload,
             },
             {
-              title: "Review reconciliation",
-              description: "Manual matching and approval routes will use the same server-side session guard.",
+              title: t("dashboard.reviewReconciliation"),
+              description: t("dashboard.reviewReconciliationDescription"),
               icon: ArrowLeftRight,
             },
             {
-              title: "Manage access",
-              description: "Fixed Admin, Finance Manager, Accountant, Auditor, and Viewer roles are seeded per tenant.",
+              title: t("dashboard.manageAccess"),
+              description: t("dashboard.manageAccessDescription"),
               icon: Users,
             },
           ].map((item) => (
@@ -84,7 +85,7 @@ export default async function DashboardPage() {
         <section className="bg-white border border-slate-200 rounded-xl shadow-sm">
           <div className="p-4 border-b border-slate-100 flex items-center gap-2">
             <FileText size={16} className="text-blue-600" aria-hidden="true" />
-            <h2 className="text-sm font-bold text-slate-900">Granted Permissions</h2>
+            <h2 className="text-sm font-bold text-slate-900">{t("dashboard.grantedPermissions")}</h2>
           </div>
           <div className="p-4 flex flex-wrap gap-2">
             {rolePermissions[roleName].map((permission) => (

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { t } from "../../lib/i18n";
 import {
   LayoutDashboard, ArrowLeftRight, Upload, Building2,
   Bot, BarChart3, ScrollText, Bell, Users, ShieldCheck,
@@ -206,10 +207,10 @@ function StatusBadge({ status }: { status: string }) {
     low: "bg-slate-50 text-slate-600 border border-slate-200",
   };
   const labels: Record<string, string> = {
-    matched: "Matched", unmatched: "Unmatched", pending: "Pending Review",
-    exception: "Exception", active: "Active", inactive: "Inactive",
-    syncing: "Syncing", success: "Success", error: "Error", partial: "Partial",
-    draft: "Draft", warning: "Warning", info: "Info", high: "High", medium: "Medium", low: "Low",
+    matched: t("status.matched"), unmatched: t("status.unmatched"), pending: t("status.pending"),
+    exception: t("status.exception"), active: t("status.active"), inactive: t("status.inactive"),
+    syncing: t("status.syncing"), success: t("status.success"), error: t("status.error"), partial: t("status.partial"),
+    draft: t("status.draft"), warning: t("status.warning"), info: t("status.info"), high: t("status.high"), medium: t("status.medium"), low: t("status.low"),
   };
   return (
     <span className={cx("inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium", map[status] || map.info)}>
@@ -389,25 +390,25 @@ function Skeleton({ className = "" }: { className?: string }) {
 
 // ─── Sidebar ─────────────────────────────────────────────────
 const navItems = [
-  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { id: "transactions", label: "Transactions", icon: ArrowLeftRight },
-  { id: "reconciliation", label: "Reconciliation", icon: GitMerge },
-  { id: "imports", label: "Imports", icon: Upload },
-  { id: "matching-rules", label: "Matching Rules", icon: SlidersHorizontal },
-  { id: "bank-accounts", label: "Bank Accounts", icon: Landmark },
-  { id: "integrations", label: "Integrations", icon: Network },
-  { id: "ai-assistant", label: "AI Assistant", icon: Bot },
-  { id: "reports", label: "Reports", icon: BarChart3 },
-  { id: "audit-logs", label: "Audit Logs", icon: ScrollText },
+  { id: "dashboard", label: t("navigation.dashboard"), icon: LayoutDashboard },
+  { id: "transactions", label: t("navigation.transactions"), icon: ArrowLeftRight },
+  { id: "reconciliation", label: t("navigation.reconciliation"), icon: GitMerge },
+  { id: "imports", label: t("navigation.imports"), icon: Upload },
+  { id: "matching-rules", label: t("navigation.matchingRules"), icon: SlidersHorizontal },
+  { id: "bank-accounts", label: t("navigation.bankAccounts"), icon: Landmark },
+  { id: "integrations", label: t("navigation.integrations"), icon: Network },
+  { id: "ai-assistant", label: t("navigation.aiAssistant"), icon: Bot },
+  { id: "reports", label: t("navigation.reports"), icon: BarChart3 },
+  { id: "audit-logs", label: t("navigation.auditLogs"), icon: ScrollText },
 ];
 
 const bottomNavItems = [
-  { id: "notifications", label: "Notifications", icon: Bell, badge: 4 },
-  { id: "users", label: "Users", icon: Users },
-  { id: "roles", label: "Roles", icon: ShieldCheck },
-  { id: "settings", label: "Settings", icon: Settings },
-  { id: "billing", label: "Billing", icon: CreditCard },
-  { id: "help", label: "Help Center", icon: HelpCircle },
+  { id: "notifications", label: t("navigation.notifications"), icon: Bell, badge: 4 },
+  { id: "users", label: t("navigation.users"), icon: Users },
+  { id: "roles", label: t("navigation.roles"), icon: ShieldCheck },
+  { id: "settings", label: t("navigation.settings"), icon: Settings },
+  { id: "billing", label: t("navigation.billing"), icon: CreditCard },
+  { id: "help", label: t("navigation.helpCenter"), icon: HelpCircle },
 ];
 
 function Sidebar({ current, onChange, collapsed, onToggle }: {
@@ -527,7 +528,7 @@ function TopNav({ onNavigate, sidebarCollapsed, onSidebarToggle }: {
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
-            placeholder="Search transactions, rules, reports..."
+            placeholder={t("system.searchPlaceholder")}
             className="w-full pl-8 pr-4 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:bg-white transition-all"
           />
           <kbd className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded font-mono">⌘K</kbd>
@@ -537,7 +538,7 @@ function TopNav({ onNavigate, sidebarCollapsed, onSidebarToggle }: {
       <div className="flex items-center gap-1 ml-auto">
         {/* Quick Actions */}
         <Btn variant="primary" size="sm" onClick={() => onNavigate("imports")} className="hidden md:inline-flex">
-          <Plus size={13} /> Import
+          <Plus size={13} /> {t("actions.import")}
         </Btn>
 
         {/* Notifications */}
@@ -551,7 +552,7 @@ function TopNav({ onNavigate, sidebarCollapsed, onSidebarToggle }: {
           {notifOpen && (
             <div className="absolute right-0 top-11 w-80 bg-white rounded-xl border border-slate-200 shadow-xl z-50">
               <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-                <span className="text-sm font-semibold text-slate-900">Notifications</span>
+                <span className="text-sm font-semibold text-slate-900">{t("notifications.title")}</span>
                 <span className="text-xs text-blue-600 cursor-pointer hover:underline">Mark all read</span>
               </div>
               {[
@@ -601,9 +602,9 @@ function TopNav({ onNavigate, sidebarCollapsed, onSidebarToggle }: {
                 <StatusBadge status="active" />
               </div>
               {[
-                { label: "Profile Settings", icon: User },
-                { label: "Security", icon: Shield },
-                { label: "Billing", icon: CreditCard },
+                { label: t("navigation.profileSettings"), icon: User },
+                { label: t("navigation.security"), icon: Shield },
+                { label: t("navigation.billing"), icon: CreditCard },
               ].map(item => (
                 <button key={item.label} className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-50 text-left">
                   <item.icon size={14} className="text-slate-400" />{item.label}
@@ -1547,7 +1548,7 @@ function TransactionsScreen() {
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-48">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search transactions..."
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder={t("transactions.searchPlaceholder")}
             className="w-full pl-8 pr-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
         </div>
         <div className="flex gap-1 bg-slate-100 p-1 rounded-lg">
@@ -3253,10 +3254,10 @@ function NotificationsScreen() {
     <div className="flex flex-col gap-5 max-w-3xl">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">Notifications</h1>
-          <p className="text-sm text-slate-500">{notifs.filter(n => !n.read).length} unread notifications</p>
+          <h1 className="text-xl font-bold text-slate-900">{t("notifications.title")}</h1>
+          <p className="text-sm text-slate-500">{t("notifications.unreadCount", { count: notifs.filter(n => !n.read).length })}</p>
         </div>
-        <Btn variant="secondary" size="sm"><Check size={13} />Mark All Read</Btn>
+        <Btn variant="secondary" size="sm"><Check size={13} />{t("actions.markAllRead")}</Btn>
       </div>
 
       <div className="flex gap-1 bg-slate-100 p-1 rounded-lg w-fit">
@@ -3264,7 +3265,7 @@ function NotificationsScreen() {
           <button key={f} onClick={() => setFilter(f)}
             className={cx("px-3 py-1.5 rounded-md text-xs font-medium capitalize transition-colors",
               filter === f ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
-            )}>{f}</button>
+            )}>{t(`notifications.filters.${f}`)}</button>
         ))}
       </div>
 
@@ -3397,10 +3398,10 @@ function ErrorScreen({ code, title, desc, onNavigate }: {
         <p className="text-slate-600 text-sm mb-8">{desc}</p>
         <div className="flex gap-3 justify-center">
           <Btn variant="primary" size="md" onClick={() => onNavigate("dashboard")}>
-            <LayoutDashboard size={15} />Back to Dashboard
+            <LayoutDashboard size={15} />{t("actions.backToDashboard")}
           </Btn>
           <Btn variant="secondary" size="md" onClick={() => window.location.reload()}>
-            <RefreshCw size={15} />Try Again
+            <RefreshCw size={15} />{t("actions.tryAgain")}
           </Btn>
         </div>
       </div>
@@ -3421,7 +3422,7 @@ function MainLayout({ children, currentView, onNavigate }: {
         <TopNav onNavigate={onNavigate} sidebarCollapsed={sidebarCollapsed} onSidebarToggle={() => setSidebarCollapsed(!sidebarCollapsed)} />
         {/* Breadcrumb */}
         <div className="px-6 py-2 border-b border-slate-100 bg-white flex items-center gap-1.5">
-          <span className="text-xs text-slate-400">E-Reconcile MN</span>
+          <span className="text-xs text-slate-400">{t("app.name")}</span>
           <ChevronRight size={11} className="text-slate-300" />
           <span className="text-xs text-slate-600 font-medium capitalize">{currentView.replace(/-/g, " ")}</span>
         </div>
@@ -3475,11 +3476,11 @@ export default function App() {
 
   if (errorViews.includes(view)) {
     const errorConfig: Record<string, { title: string; desc: string }> = {
-      "403": { title: "Access Denied", desc: "You don't have permission to view this page. Contact your administrator to request access." },
-      "404": { title: "Page Not Found", desc: "The page you're looking for doesn't exist or has been moved." },
-      "500": { title: "Server Error", desc: "Something went wrong on our end. We're working to fix it. Please try again in a moment." },
-      "maintenance": { title: "Scheduled Maintenance", desc: "E-Reconcile MN is undergoing scheduled maintenance. We'll be back online shortly." },
-      "offline": { title: "No Internet Connection", desc: "Check your internet connection and try again. Your data is safe." },
+      "403": { title: t("errors.403.title"), desc: t("errors.403.description") },
+      "404": { title: t("errors.404.title"), desc: t("errors.404.description") },
+      "500": { title: t("errors.500.title"), desc: t("errors.500.description") },
+      "maintenance": { title: t("errors.maintenance.title"), desc: t("errors.maintenance.description") },
+      "offline": { title: t("errors.offline.title"), desc: t("errors.offline.description") },
     };
     const cfg = errorConfig[view] || errorConfig["404"];
     return <ErrorScreen code={view} title={cfg.title} desc={cfg.desc} onNavigate={navigate} />;
@@ -3507,19 +3508,19 @@ export default function App() {
   return (
     <MainLayout currentView={view} onNavigate={navigate}>
       {screenMap[view] || (
-        <EmptyState icon={<FolderOpen size={32} />} title="Screen not found"
-          desc="This screen is not yet implemented" action={<Btn variant="primary" size="sm" onClick={() => navigate("dashboard")}>Back to Dashboard</Btn>} />
+        <EmptyState icon={<FolderOpen size={32} />} title={t("system.screenNotFound")}
+          desc={t("system.screenNotImplemented")} action={<Btn variant="primary" size="sm" onClick={() => navigate("dashboard")}>{t("actions.backToDashboard")}</Btn>} />
       )}
       {/* Demo Error Navigation */}
       <div className="fixed bottom-4 right-4 z-50">
         <div className="bg-white border border-slate-200 rounded-xl shadow-lg p-3 flex flex-col gap-1.5">
-          <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Error Pages</p>
+          <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">{t("system.errorPages")}</p>
           {(["403", "404", "500", "maintenance", "offline"] as View[]).map(e => (
             <button key={e} onClick={() => navigate(e)} className="text-[10px] text-blue-600 hover:underline text-left font-mono">
-              View {e}
+              {t("system.view", { name: e })}
             </button>
           ))}
-          <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mt-1">Auth Pages</p>
+          <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mt-1">{t("system.authPages")}</p>
           {(["login", "register", "mfa", "session-expired"] as View[]).map(e => (
             <button key={e} onClick={() => navigate(e)} className="text-[10px] text-blue-600 hover:underline text-left">
               {e}

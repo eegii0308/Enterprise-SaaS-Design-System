@@ -1,19 +1,20 @@
 import type { Permission, RoleName } from "@/types/permissions";
+import { t } from "@/lib/i18n";
 
 export const fixedRoleLabels: Record<RoleName, string> = {
-  ADMIN: "Admin",
-  FINANCE_MANAGER: "Finance Manager",
-  ACCOUNTANT: "Accountant",
-  AUDITOR: "Auditor",
-  VIEWER: "Viewer",
+  ADMIN: t("roles.admin"),
+  FINANCE_MANAGER: t("roles.financeManager"),
+  ACCOUNTANT: t("roles.accountant"),
+  AUDITOR: t("roles.auditor"),
+  VIEWER: t("roles.viewer"),
 };
 
 export const fixedRoleDescriptions: Record<RoleName, string> = {
-  ADMIN: "Full tenant administration and financial workflow access.",
-  FINANCE_MANAGER: "Reviews, approves, reports, and manages reconciliation work.",
-  ACCOUNTANT: "Imports transactions, reviews records, and prepares reconciliations.",
-  AUDITOR: "Reviews transactions, reports, and audit history without editing financial data.",
-  VIEWER: "Read-only access to approved finance workspace views.",
+  ADMIN: t("roles.descriptions.admin"),
+  FINANCE_MANAGER: t("roles.descriptions.financeManager"),
+  ACCOUNTANT: t("roles.descriptions.accountant"),
+  AUDITOR: t("roles.descriptions.auditor"),
+  VIEWER: t("roles.descriptions.viewer"),
 };
 
 export const rolePermissions: Record<RoleName, readonly Permission[]> = {

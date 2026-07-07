@@ -1,0 +1,187 @@
+{
+  "app": {
+    "name": "E-Reconcile MN",
+    "description": "Organization-scoped reconciliation workspace for finance teams.",
+    "workspace": "Finance reconciliation workspace"
+  },
+  "auth": {
+    "signIn": {
+      "title": "Sign in",
+      "subtitle": "Use your organization account to continue.",
+      "button": "Sign in",
+      "forgotPassword": "Forgot password?",
+      "firstAdminSetup": "First admin setup"
+    },
+    "register": {
+      "title": "Create first organization",
+      "subtitle": "This one-time setup creates the first Admin membership.",
+      "button": "Create organization",
+      "backToSignIn": "Back to sign in"
+    },
+    "forgotPassword": {
+      "title": "Reset password",
+      "subtitle": "Request a reset link for an active account.",
+      "button": "Send reset link",
+      "backToSignIn": "Back to sign in"
+    },
+    "fields": {
+      "email": "Email",
+      "password": "Password",
+      "fullName": "Full name",
+      "organization": "Organization",
+      "currency": "Currency",
+      "fiscalMonth": "Fiscal month"
+    },
+    "messages": {
+      "noActiveMembership": "No active organization membership was found for this account.",
+      "validEmail": "Enter a valid email address.",
+      "resetLinkSent": "If an active account exists, a password reset link will be sent.",
+      "checkSignIn": "Check your sign in details.",
+      "invalidCredentials": "Email or password is incorrect.",
+      "checkRegistration": "Check the registration form.",
+      "firstOrganizationComplete": "First organization setup is already complete. Ask an Admin to create your membership.",
+      "adminRoleMissing": "Admin role was not created."
+    },
+    "validation": {
+      "passwordMin": "Password must be at least 8 characters.",
+      "fullNameRequired": "Enter your full name.",
+      "organizationRequired": "Enter your organization name."
+    }
+  },
+  "navigation": {
+    "dashboard": "Dashboard",
+    "transactions": "Transactions",
+    "reconciliation": "Reconciliation",
+    "imports": "Imports",
+    "matchingRules": "Matching Rules",
+    "bankAccounts": "Bank Accounts",
+    "integrations": "Integrations",
+    "aiAssistant": "AI Assistant",
+    "reports": "Reports",
+    "auditLogs": "Audit Logs",
+    "notifications": "Notifications",
+    "users": "Users",
+    "roles": "Roles",
+    "settings": "Settings",
+    "billing": "Billing",
+    "helpCenter": "Help Center",
+    "profileSettings": "Profile Settings",
+    "security": "Security"
+  },
+  "actions": {
+    "signOut": "Sign out",
+    "import": "Import",
+    "upload": "Upload",
+    "download": "Download",
+    "preview": "Preview",
+    "export": "Export",
+    "retry": "Retry",
+    "delete": "Delete",
+    "back": "Back",
+    "continue": "Continue",
+    "saveChanges": "Save Changes",
+    "tryAgain": "Try Again",
+    "backToDashboard": "Back to Dashboard",
+    "markAllRead": "Mark All Read",
+    "add": "Add",
+    "generateKey": "Generate Key",
+    "addEndpoint": "Add Endpoint",
+    "upgradePlan": "Upgrade Plan",
+    "downloadAll": "Download All"
+  },
+  "dashboard": {
+    "signedInAs": "Signed in as {name} with {role} access.",
+    "organization": "Organization",
+    "activeRole": "Active role",
+    "permissions": "Permissions",
+    "phase": "Phase",
+    "tenantFoundation": "Tenant foundation",
+    "importTransactions": "Import transactions",
+    "importTransactionsDescription": "CSV/XLSX import will attach to this organization context in Phase 2.",
+    "reviewReconciliation": "Review reconciliation",
+    "reviewReconciliationDescription": "Manual matching and approval routes will use the same server-side session guard.",
+    "manageAccess": "Manage access",
+    "manageAccessDescription": "Fixed Admin, Finance Manager, Accountant, Auditor, and Viewer roles are seeded per tenant.",
+    "grantedPermissions": "Granted Permissions"
+  },
+  "roles": {
+    "admin": "Admin",
+    "financeManager": "Finance Manager",
+    "accountant": "Accountant",
+    "auditor": "Auditor",
+    "viewer": "Viewer",
+    "descriptions": {
+      "admin": "Full tenant administration and financial workflow access.",
+      "financeManager": "Reviews, approves, reports, and manages reconciliation work.",
+      "accountant": "Imports transactions, reviews records, and prepares reconciliations.",
+      "auditor": "Reviews transactions, reports, and audit history without editing financial data.",
+      "viewer": "Read-only access to approved finance workspace views."
+    }
+  },
+  "status": {
+    "matched": "Matched",
+    "unmatched": "Unmatched",
+    "pending": "Pending Review",
+    "exception": "Exception",
+    "active": "Active",
+    "inactive": "Inactive",
+    "syncing": "Syncing",
+    "success": "Success",
+    "error": "Error",
+    "partial": "Partial",
+    "draft": "Draft",
+    "warning": "Warning",
+    "info": "Info",
+    "high": "High",
+    "medium": "Medium",
+    "low": "Low",
+    "all": "all",
+    "unread": "unread"
+  },
+  "system": {
+    "somethingWentWrong": "Something went wrong. Please try again.",
+    "screenNotFound": "Screen not found",
+    "screenNotImplemented": "This screen is not yet implemented",
+    "errorPages": "Error Pages",
+    "authPages": "Auth Pages",
+    "view": "View {name}",
+    "searchPlaceholder": "Search transactions, rules, reports..."
+  },
+  "errors": {
+    "403": {
+      "title": "Access Denied",
+      "description": "You don't have permission to view this page. Contact your administrator to request access."
+    },
+    "404": {
+      "title": "Page Not Found",
+      "description": "The page you're looking for doesn't exist or has been moved."
+    },
+    "500": {
+      "title": "Server Error",
+      "description": "Something went wrong on our end. We're working to fix it. Please try again in a moment."
+    },
+    "maintenance": {
+      "title": "Scheduled Maintenance",
+      "description": "E-Reconcile MN is undergoing scheduled maintenance. We'll be back online shortly."
+    },
+    "offline": {
+      "title": "No Internet Connection",
+      "description": "Check your internet connection and try again. Your data is safe."
+    }
+  },
+  "transactions": {
+    "searchPlaceholder": "Search transactions..."
+  },
+  "notifications": {
+    "title": "Notifications",
+    "unreadCount": "{count} unread notifications",
+    "filters": {
+      "all": "all",
+      "unread": "unread",
+      "success": "success",
+      "warning": "warning",
+      "error": "error",
+      "info": "info"
+    }
+  }
+}

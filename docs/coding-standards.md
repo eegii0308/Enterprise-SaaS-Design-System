@@ -51,6 +51,16 @@ The current project is a generated frontend prototype. Production work should pr
 - Keyboard navigation should work for menus, dialogs, tabs, and tables.
 - Error messages should be visible and programmatically associated with fields.
 
+## Localization Rules
+
+- Supported languages are English and Mongolian.
+- Translation files are maintained in `locales/en.json` and `locales/mn.json`.
+- Use the shared translation helper from `lib/i18n.ts` for all user-visible copy.
+- Do not add raw English strings directly in JSX, route components, forms, alerts, or error messages.
+- When adding new text, create a new translation key in both locale files before using it in code.
+- Keep translation keys descriptive and grouped by feature or domain, such as `auth.signIn.title` or `dashboard.grantedPermissions`.
+- Preserve interpolation placeholders such as `{name}` and `{role}` when translating dynamic content.
+
 ## Testing Rules
 
 Minimum MVP coverage:

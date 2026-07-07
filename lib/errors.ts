@@ -1,9 +1,13 @@
+import { t } from "@/lib/i18n";
+
+export type AppErrorCode = "UNAUTHENTICATED" | "FORBIDDEN" | "VALIDATION" | "CONFLICT" | "SERVER";
+
 export class AppError extends Error {
-  constructor(
-    message: string,
-    public readonly code: "UNAUTHENTICATED" | "FORBIDDEN" | "VALIDATION" | "CONFLICT" | "SERVER",
-  ) {
+  readonly code: AppErrorCode;
+
+  constructor(message: string, code: AppErrorCode) {
     super(message);
+    this.code = code;
   }
 }
 
@@ -12,5 +16,5 @@ export function toSafeErrorMessage(error: unknown) {
     return error.message;
   }
 
-  return "Something went wrong. Please try again.";
+  return t("system.somethingWentWrong");
 }

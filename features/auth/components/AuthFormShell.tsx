@@ -1,4 +1,5 @@
 import { Building2 } from "lucide-react";
+import { t } from "@/lib/i18n";
 
 export function AuthFormShell({
   title,
@@ -17,8 +18,8 @@ export function AuthFormShell({
             <Building2 size={20} aria-hidden="true" />
           </div>
           <div>
-            <p className="text-sm font-bold text-slate-900">E-Reconcile MN</p>
-            <p className="text-xs text-slate-500">Finance reconciliation workspace</p>
+            <p className="text-sm font-bold text-slate-900">{t("app.name")}</p>
+            <p className="text-xs text-slate-500">{t("app.workspace")}</p>
           </div>
         </div>
         <h1 className="text-xl font-bold text-slate-900">{title}</h1>

@@ -19,6 +19,7 @@
 - Added Prisma schema for organization-scoped tenants, users, memberships, fixed roles, permissions, imports, transactions, reconciliation, reports, and audit logs.
 - Added typed database client, signed session cookie helpers, server-side auth actions, authorization helpers, and MVP role-permission mappings.
 - Added .env.example with database and auth session secret configuration.
+- Documented localization support for English and Mongolian, with translation files in `locales/en.json` and `locales/mn.json` and rules to route new user-facing text through the shared i18n helper.
 
 ### Changed
 
