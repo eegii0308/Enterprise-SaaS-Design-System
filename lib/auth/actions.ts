@@ -1,6 +1,7 @@
 "use server";
 
 import { compare, hash } from "bcryptjs";
+import type { Prisma } from "@prisma/client";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db/client";
 import { clearSession, setSession } from "@/lib/auth/session";
@@ -104,7 +105,7 @@ export async function registerFirstAdminAction(_state: AuthFormState, formData: 
 
   const passwordHash = await hash(parsed.data.password, 12);
 
-  const user = await prisma.$transaction(async (tx) => {
+  const user = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const createdUser = await tx.user.create({
       data: {
         email: parsed.data.email,

@@ -1,1 +1,6 @@
-@import "../src/styles/index.css";
+@import "../src/styles/fonts.css";
+@import "tailwindcss";
+@source "../app/**/*.{ts,tsx}";
+@source "../features/**/*.{ts,tsx}";
+@source "../src/app/components/**/*.{ts,tsx}";
+@import "../src/styles/theme.css";
