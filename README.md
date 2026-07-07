@@ -16,10 +16,22 @@ Core MVP path:
 
 ## Running The Prototype
 
-Run `npm i` to install dependencies.
+Run npm i to install dependencies.
 
-Run `npm run dev` to start the development server.
+Run npm run dev to start the development server.
+
+## Database Setup
+
+Copy .env.example to .env and set DATABASE_URL to a PostgreSQL database.
+
+Run the Prisma setup commands before starting production development:
+
+    npm install
+    npm run prisma:generate
+    npm run prisma:migrate
+
+For a clean database, npm run prisma:migrate applies all committed migrations from prisma/migrations and then regenerates the Prisma client. Do not use prisma db push for shared development; create and commit migration files whenever prisma/schema.prisma changes.
 
 ## Documentation
 
-Planning docs live in `docs/`. Start with `docs/blueprint.md`, then read `docs/feature-roadmap.md`, `docs/architecture.md`, `docs/database-design.md`, `docs/api-design.md`, and `docs/business-rules.md`.
+Planning docs live in docs/. Start with docs/blueprint.md, then read docs/feature-roadmap.md, docs/architecture.md, docs/database-design.md, docs/api-design.md, and docs/business-rules.md.

@@ -101,6 +101,18 @@ Authorization must be enforced on the server:
 - Use a shared organization-scoped query helper or database row-level security equivalent.
 - Add tests that prove users cannot access another organization's records.
 
+## Database Migration Workflow
+
+Prisma migrations are the source of truth for database shape. The initial migration lives in prisma/migrations and must be committed with the schema it represents.
+
+Use this workflow for database changes:
+
+    npm run prisma:generate
+    npm run prisma:migrate
+
+When prisma/schema.prisma changes, create a named migration with npx prisma migrate dev --name <change-name> and commit both the schema change and the generated files under prisma/migrations. Avoid prisma db push for shared development because it changes database state without preserving a reviewable migration history.
+
+Before starting a feature phase that depends on database changes, verify the migration history against a clean PostgreSQL database by pointing DATABASE_URL at an empty database and running npm run prisma:migrate.
 ## MVP Architecture Decisions
 
 - Keep the first production build as a single Next.js app with server-side auth and data loading.
