@@ -1,0 +1,412 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+  PENDING
+}
+
+enum MembershipStatus {
+  ACTIVE
+  DISABLED
+  INVITED
+}
+
+enum SystemRoleName {
+  ADMIN
+  FINANCE_MANAGER
+  ACCOUNTANT
+  AUDITOR
+  VIEWER
+}
+
+enum SourceType {
+  BANK
+  LEDGER
+}
+
+enum ImportStatus {
+  UPLOADED
+  PROCESSING
+  COMPLETED
+  COMPLETED_WITH_ERRORS
+  FAILED
+}
+
+enum ImportRowStatus {
+  PENDING
+  VALID
+  DUPLICATE
+  INVALID
+  PROCESSED
+}
+
+enum TransactionStatus {
+  UNMATCHED
+  MATCHED
+  PENDING_REVIEW
+  EXCEPTION
+}
+
+enum ReconciliationRunStatus {
+  DRAFT
+  IN_PROGRESS
+  READY_FOR_REVIEW
+  APPROVED
+  REOPENED
+}
+
+enum ReconciliationMatchType {
+  MANUAL
+  RULE
+}
+
+enum ReconciliationMatchStatus {
+  PROPOSED
+  CONFIRMED
+  REJECTED
+  REMOVED
+}
+
+enum MatchingRuleStatus {
+  DRAFT
+  ACTIVE
+  INACTIVE
+}
+
+enum ReportType {
+  RECONCILIATION_SUMMARY
+  EXCEPTION_LIST
+  UNMATCHED_TRANSACTIONS
+}
+
+enum ReportStatus {
+  PENDING
+  READY
+  FAILED
+}
+
+model Organization {
+  id                   String   @id @default(cuid())
+  name                 String
+  defaultCurrency      String   @default("MNT") @map("default_currency")
+  fiscalYearStartMonth Int      @default(1) @map("fiscal_year_start_month")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  memberships          Membership[]
+  roles                Role[]
+  bankAccounts         BankAccount[]
+  importBatches        ImportBatch[]
+  importRows           ImportRow[]
+  transactions         Transaction[]
+  transactionNotes     TransactionReviewNote[]
+  transactionAdjustments TransactionAdjustment[]
+  reconciliationRuns   ReconciliationRun[]
+  reconciliationMatches ReconciliationMatch[]
+  matchingRules        MatchingRule[]
+  reports              Report[]
+  auditLogs            AuditLog[]
+
+  @@map("organizations")
+}
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  passwordHash String     @map("password_hash")
+  fullName     String     @map("full_name")
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  memberships Membership[]
+
+  @@map("users")
+}
+
+model Membership {
+  id             String           @id @default(cuid())
+  organizationId String           @map("organization_id")
+  userId         String           @map("user_id")
+  roleId         String           @map("role_id")
+  status         MembershipStatus @default(ACTIVE)
+  invitedAt      DateTime?        @map("invited_at")
+  joinedAt       DateTime?        @map("joined_at")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role         Role         @relation(fields: [roleId], references: [id])
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@map("memberships")
+}
+
+model Role {
+  id             String         @id @default(cuid())
+  organizationId String         @map("organization_id")
+  name           SystemRoleName
+  description    String
+  isSystemRole   Boolean        @default(true) @map("is_system_role")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  permissions  RolePermission[]
+  memberships  Membership[]
+
+  @@unique([organizationId, name])
+  @@map("roles")
+}
+
+model RolePermission {
+  id         String   @id @default(cuid())
+  roleId     String   @map("role_id")
+  permission String
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permission])
+  @@map("role_permissions")
+}
+
+model BankAccount {
+  id                  String   @id @default(cuid())
+  organizationId      String   @map("organization_id")
+  name                String
+  bankName            String   @map("bank_name")
+  maskedAccountNumber String   @map("masked_account_number")
+  currency            String
+  status              String   @default("active")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@map("bank_accounts")
+}
+
+model ImportBatch {
+  id             String       @id @default(cuid())
+  organizationId String       @map("organization_id")
+  sourceType     SourceType   @map("source_type")
+  fileName       String       @map("file_name")
+  fileSize       Int          @map("file_size")
+  fileStorageKey String       @map("file_storage_key")
+  fileHash       String       @map("file_hash")
+  status         ImportStatus @default(UPLOADED)
+  totalRows      Int          @default(0) @map("total_rows")
+  validRows      Int          @default(0) @map("valid_rows")
+  errorRows      Int          @default(0) @map("error_rows")
+  createdBy      String       @map("created_by")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  completedAt    DateTime?    @map("completed_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  rows         ImportRow[]
+  transactions Transaction[]
+
+  @@unique([organizationId, fileHash])
+  @@map("import_batches")
+}
+
+model ImportRow {
+  id                   String          @id @default(cuid())
+  organizationId        String          @map("organization_id")
+  importBatchId         String          @map("import_batch_id")
+  rowNumber             Int             @map("row_number")
+  rawData               Json            @map("raw_data")
+  normalizedData        Json?           @map("normalized_data")
+  rowHash               String          @map("row_hash")
+  validationStatus      ImportRowStatus @default(PENDING) @map("validation_status")
+  errorMessages         Json?           @map("error_messages")
+  createdTransactionId  String?         @unique @map("created_transaction_id")
+  createdAt             DateTime        @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  importBatch ImportBatch @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+  createdTransaction Transaction? @relation("CreatedTransaction", fields: [createdTransactionId], references: [id])
+
+  @@unique([organizationId, importBatchId, rowNumber])
+  @@unique([organizationId, rowHash])
+  @@map("import_rows")
+}
+
+model Transaction {
+  id                  String            @id @default(cuid())
+  organizationId      String            @map("organization_id")
+  importBatchId       String?           @map("import_batch_id")
+  sourceType          SourceType        @map("source_type")
+  bankAccountId       String?           @map("bank_account_id")
+  transactionDate     DateTime          @map("transaction_date")
+  description         String
+  vendor              String?
+  reference           String?
+  debitAmount         Decimal           @default(0) @db.Decimal(18, 2) @map("debit_amount")
+  creditAmount        Decimal           @default(0) @db.Decimal(18, 2) @map("credit_amount")
+  amount              Decimal           @db.Decimal(18, 2)
+  currency            String
+  status              TransactionStatus @default(UNMATCHED)
+  externalFingerprint String            @map("external_fingerprint")
+  createdAt           DateTime          @default(now()) @map("created_at")
+  updatedAt           DateTime          @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  importBatch  ImportBatch? @relation(fields: [importBatchId], references: [id])
+  bankAccount  BankAccount? @relation(fields: [bankAccountId], references: [id])
+  sourceRow    ImportRow?   @relation("CreatedTransaction")
+  notes        TransactionReviewNote[]
+  adjustments  TransactionAdjustment[]
+  bankMatches  ReconciliationMatch[] @relation("BankTransaction")
+  ledgerMatches ReconciliationMatch[] @relation("LedgerTransaction")
+
+  @@unique([organizationId, externalFingerprint])
+  @@index([organizationId, status])
+  @@map("transactions")
+}
+
+model TransactionReviewNote {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  transactionId  String   @map("transaction_id")
+  note           String
+  createdBy      String   @map("created_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  transaction  Transaction  @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, transactionId])
+  @@map("transaction_review_notes")
+}
+
+model TransactionAdjustment {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  transactionId  String   @map("transaction_id")
+  fieldName      String   @map("field_name")
+  oldValue       String   @map("old_value")
+  newValue       String   @map("new_value")
+  reason         String
+  createdBy      String   @map("created_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  transaction  Transaction  @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@map("transaction_adjustments")
+}
+
+model ReconciliationRun {
+  id             String                  @id @default(cuid())
+  organizationId String                  @map("organization_id")
+  name           String
+  periodStart    DateTime                @map("period_start")
+  periodEnd      DateTime                @map("period_end")
+  status         ReconciliationRunStatus @default(DRAFT)
+  createdBy      String                  @map("created_by")
+  approvedBy     String?                 @map("approved_by")
+  approvedAt     DateTime?               @map("approved_at")
+  reopenedBy     String?                 @map("reopened_by")
+  reopenedAt     DateTime?               @map("reopened_at")
+  createdAt      DateTime                @default(now()) @map("created_at")
+  completedAt    DateTime?               @map("completed_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  matches      ReconciliationMatch[]
+
+  @@index([organizationId, status])
+  @@map("reconciliation_runs")
+}
+
+model ReconciliationMatch {
+  id                  String                    @id @default(cuid())
+  organizationId      String                    @map("organization_id")
+  reconciliationRunId String                    @map("reconciliation_run_id")
+  bankTransactionId   String                    @map("bank_transaction_id")
+  ledgerTransactionId String                    @map("ledger_transaction_id")
+  matchType           ReconciliationMatchType   @map("match_type")
+  confidenceScore     Decimal?                  @db.Decimal(5, 2) @map("confidence_score")
+  status              ReconciliationMatchStatus @default(PROPOSED)
+  createdBy           String                    @map("created_by")
+  removedBy           String?                   @map("removed_by")
+  removedAt           DateTime?                 @map("removed_at")
+  createdAt           DateTime                  @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  reconciliationRun ReconciliationRun @relation(fields: [reconciliationRunId], references: [id], onDelete: Cascade)
+  bankTransaction   Transaction @relation("BankTransaction", fields: [bankTransactionId], references: [id])
+  ledgerTransaction Transaction @relation("LedgerTransaction", fields: [ledgerTransactionId], references: [id])
+
+  @@index([organizationId, reconciliationRunId])
+  @@map("reconciliation_matches")
+}
+
+model MatchingRule {
+  id                 String             @id @default(cuid())
+  organizationId     String             @map("organization_id")
+  name               String
+  description        String?
+  vendorPattern      String?            @map("vendor_pattern")
+  descriptionPattern String?            @map("description_pattern")
+  referencePattern   String?            @map("reference_pattern")
+  amountTolerance    Decimal            @default(0) @db.Decimal(18, 2) @map("amount_tolerance")
+  dateToleranceDays  Int                @default(0) @map("date_tolerance_days")
+  priority           Int                @default(100)
+  status             MatchingRuleStatus @default(DRAFT)
+  createdBy          String             @map("created_by")
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status])
+  @@map("matching_rules")
+}
+
+model Report {
+  id             String       @id @default(cuid())
+  organizationId String       @map("organization_id")
+  reportType     ReportType   @map("report_type")
+  periodStart    DateTime     @map("period_start")
+  periodEnd      DateTime     @map("period_end")
+  status         ReportStatus @default(PENDING)
+  fileStorageKey String?      @map("file_storage_key")
+  expiresAt      DateTime?    @map("expires_at")
+  createdBy      String       @map("created_by")
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, reportType])
+  @@map("reports")
+}
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  actorUserId    String?  @map("actor_user_id")
+  action         String
+  resourceType   String   @map("resource_type")
+  resourceId     String?  @map("resource_id")
+  metadata       Json?
+  ipAddress      String?  @map("ip_address")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+  @@map("audit_logs")
+}

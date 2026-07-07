@@ -2,6 +2,19 @@
 
 ## 2026-07-07
 
+### Added
+
+- Implemented Phase 1 production foundation with Next.js App Router routes for sign in, first Admin registration, password reset request, and protected dashboard access.
+- Added Prisma schema for organization-scoped tenants, users, memberships, fixed roles, permissions, imports, transactions, reconciliation, reports, and audit logs.
+- Added typed database client, signed session cookie helpers, server-side auth actions, authorization helpers, and MVP role-permission mappings.
+- Added .env.example with database and auth session secret configuration.
+
+### Changed
+
+- Switched production scripts to Next.js while keeping Vite prototype scripts under prototype:*.
+- Kept the generated Figma prototype intact as the visual reference and reused existing UI primitives/styles in the new route shell.
+
+
 ### Changed
 
 - Tightened E-Reconcile MN documentation around the MVP reconciliation cycle.
