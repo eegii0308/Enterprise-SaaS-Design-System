@@ -2,6 +2,17 @@
 
 ## 2026-07-07
 
+## Version 0.1.0
+
+### Completed
+
+- Project foundation
+- Authentication
+- Database setup
+- Organization model
+- Role structure
+
+
 ### Added
 
 - Implemented Phase 1 production foundation with Next.js App Router routes for sign in, first Admin registration, password reset request, and protected dashboard access.

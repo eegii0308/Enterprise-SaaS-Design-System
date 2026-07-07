@@ -54,14 +54,16 @@ Purpose: make every future feature organization-scoped and permission-checked.
 
 Tasks:
 
-- Implement sign in, sign out, password reset, and first admin registration.
-- Create the first organization setup flow.
-- Create users, memberships, fixed roles, and role permissions.
-- Protect dashboard routes through server-side session checks.
-- Add server-side authorization helpers.
-- Enforce organization context on all protected data access.
-- Add fixed MVP roles: Admin, Finance Manager, Accountant, Auditor, Viewer.
-- Add admin-created user or membership flow if needed for launch.
+- [x] Implement sign in, sign out, password reset request, and first admin registration.
+- [x] Create the first organization setup flow.
+- [x] Create users, memberships, fixed roles, and role permissions.
+- [x] Protect dashboard routes through server-side session checks.
+- [x] Add server-side authorization helpers.
+- [x] Establish organization context for protected sessions and future data access.
+- [x] Add fixed MVP roles: Admin, Finance Manager, Accountant, Auditor, Viewer.
+- [ ] Add admin-created user or membership flow if needed for launch.
+- [ ] Complete password reset token, email, and new-password flow.
+- [ ] Add automated tests for session guards, membership access, organization scoping, and role permissions.
 
 Dependencies:
 
