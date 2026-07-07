@@ -1,0 +1,122 @@
+# Architecture
+
+## Current State
+
+The current application is a Vite React prototype:
+
+- Entry point: `src/main.tsx`
+- Main app: `src/app/App.tsx`
+- UI primitives: `src/app/components/ui`
+- Styles: `src/styles`
+
+The main `App.tsx` file contains mock data, screen routing, layout, auth screens, dashboard screens, product screens, local UI helpers, and error pages in one file. This is acceptable for a prototype but not for production SaaS development.
+
+## Target Architecture
+
+The MVP should be migrated to a Next.js App Router architecture before major feature development.
+
+Recommended structure:
+
+```txt
+app/
+  (auth)/
+    login/
+    register/
+    forgot-password/
+    reset-password/
+  (dashboard)/
+    dashboard/
+    transactions/
+    imports/
+    reconciliation/
+    matching-rules/
+    reports/
+    audit-logs/
+    users/
+    settings/
+  api/
+components/
+  ui/
+  layout/
+features/
+  auth/
+  dashboard/
+  transactions/
+  imports/
+  reconciliation/
+  matching-rules/
+  reports/
+  users/
+  settings/
+lib/
+  api/
+  auth/
+  db/
+  permissions/
+  validations/
+types/
+```
+
+## Frontend Principles
+
+- Route screens should live under `app/`.
+- Reusable product components should live under `features/<domain>/components`.
+- Shared primitives should live under `components/ui`.
+- Data access should not be embedded in visual components.
+- Mock data should live in fixtures only and should not be mixed with production components.
+- Page components should compose smaller components instead of owning all UI logic directly.
+
+## State Management
+
+Use simple state boundaries:
+
+- URL state: filters, search, pagination, selected tab.
+- Server state: transactions, imports, reconciliation runs, users, roles, reports.
+- Local UI state: modals, drawers, selected rows, temporary form state.
+
+Recommended MVP tools:
+
+- Next.js routing for navigation.
+- Server-side data loading first.
+- Server actions or API routes for mutations.
+- TanStack Query only if the UI needs richer client caching and refetch control.
+- React Hook Form plus a validation schema library for forms.
+
+## Authentication Boundary
+
+Authentication should be enforced outside page components:
+
+- Public routes under `(auth)`.
+- Protected routes under `(dashboard)`.
+- Middleware or server layout checks for authenticated access.
+- Server-side session validation before loading protected data.
+
+## Authorization Boundary
+
+Authorization must be enforced on the server:
+
+- UI may hide unavailable actions.
+- API/server actions must check permissions before reading or mutating data.
+- All queries must be scoped by `organization_id`.
+- Use a shared organization-scoped query helper or database row-level security equivalent.
+- Add tests that prove users cannot access another organization's records.
+
+## MVP Architecture Decisions
+
+- Keep the first production build as a single Next.js app with server-side auth and data loading.
+- Avoid custom role-management UI; support fixed role assignment only.
+- Avoid a generic report engine; generate summary, exception, and unmatched reports only.
+- Keep matching rules as auditable match proposal helpers, not a generalized rules engine.
+- Keep background processing minimal for MVP imports: reliable status, retries, and clear failure states are more important than a complex job platform.
+
+## Build And Performance
+
+The current Vite production build succeeds, but the JavaScript bundle is large because every screen is loaded at once. Next.js route-level splitting should reduce initial load.
+
+Performance priorities:
+
+- Split screens by route.
+- Lazy-load charts where possible.
+- Avoid importing large icon sets through broad imports.
+- Use server pagination for transaction tables.
+- Use table virtualization only when row counts require it.
