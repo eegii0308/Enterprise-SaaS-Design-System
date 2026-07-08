@@ -6,6 +6,7 @@ import path from "node:path";
 import { ImportStatus, Prisma, SourceType } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db/client";
+import { processImportBatch } from "@/lib/imports/processor";
 import { getImportStoragePath } from "@/lib/imports/storage";
 import { requirePermission } from "@/lib/permissions/authorize";
 
@@ -82,14 +83,38 @@ export async function uploadImportAction(
       select: { id: true },
     });
 
+    await prisma.auditLog.create({
+      data: {
+        organizationId: session.organizationId,
+        actorUserId: session.userId,
+        action: "IMPORT_CREATED",
+        resourceType: "importBatch",
+        resourceId: importBatch.id,
+        metadata: {
+          organizationId: session.organizationId,
+          userId: session.userId,
+          importBatchId: importBatch.id,
+          timestamp: new Date().toISOString(),
+        },
+      },
+    });
+
+    await processImportBatch(importBatch.id, {
+      organizationId: session.organizationId,
+      userId: session.userId,
+    });
+
     revalidatePath("/dashboard");
     revalidatePath("/dashboard/imports");
 
     return {
       status: "success",
-      message: `Upload recorded as import batch ${importBatch.id}. Processing has not started yet.`,
+      message: `Upload recorded and processed as import batch ${importBatch.id}.`,
     };
   } catch (error) {
+    revalidatePath("/dashboard");
+    revalidatePath("/dashboard/imports");
+
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       return {
         status: "error",
@@ -97,6 +122,6 @@ export async function uploadImportAction(
       };
     }
 
-    return { status: "error", message: "The upload could not be recorded. Please try again." };
+    return { status: "error", message: "The upload could not be processed. Please try again." };
   }
 }

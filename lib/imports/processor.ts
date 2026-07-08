@@ -1,9 +1,15 @@
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { ImportRowStatus, ImportStatus, Prisma, SourceType } from "@prisma/client";
+import { ImportRowStatus, ImportStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
 import { prepareImportRows } from "@/lib/imports/csv-core";
+import { didAcquireProcessingLock, getCompletedImportStatus, getImportSummary, isCompletedImportStatus, shouldCreateAuditEvent } from "@/lib/imports/processor-core";
 import { getImportStoragePath } from "@/lib/imports/storage";
+
+type ImportProcessingSession = {
+  organizationId: string;
+  userId: string;
+};
 
 type NormalizedTransactionData = {
   transactionDate: string;
@@ -59,7 +65,40 @@ function parseNormalizedTransactionData(value: Prisma.JsonValue): NormalizedTran
   };
 }
 
-export async function processImportBatch(importBatchId: string) {
+async function createImportAuditLog(data: {
+  organizationId: string;
+  userId: string;
+  importBatchId: string;
+  action: "IMPORT_PROCESSING_STARTED" | "IMPORT_COMPLETED" | "IMPORT_FAILED";
+  metadata?: Prisma.InputJsonValue;
+}) {
+  const existingAuditLog = await prisma.auditLog.findFirst({
+    where: {
+      organizationId: data.organizationId,
+      action: data.action,
+      resourceType: "importBatch",
+      resourceId: data.importBatchId,
+    },
+    select: { id: true },
+  });
+
+  if (!shouldCreateAuditEvent(existingAuditLog ? 1 : 0)) {
+    return;
+  }
+
+  await prisma.auditLog.create({
+    data: {
+      organizationId: data.organizationId,
+      actorUserId: data.userId,
+      action: data.action,
+      resourceType: "importBatch",
+      resourceId: data.importBatchId,
+      metadata: data.metadata ?? Prisma.JsonNull,
+    },
+  });
+}
+
+export async function processImportBatch(importBatchId: string, session: ImportProcessingSession) {
   const importBatch = await prisma.importBatch.findUnique({
     where: { id: importBatchId },
     select: {
@@ -68,6 +107,12 @@ export async function processImportBatch(importBatchId: string) {
       sourceType: true,
       fileStorageKey: true,
       status: true,
+      totalRows: true,
+      validRows: true,
+      errorRows: true,
+      duplicateRows: true,
+      processingError: true,
+      completedAt: true,
       createdBy: true,
     },
   });
@@ -76,16 +121,58 @@ export async function processImportBatch(importBatchId: string) {
     throw new Error("Import batch was not found.");
   }
 
-  if (importBatch.status !== ImportStatus.PENDING) {
-    throw new Error("Only pending import batches can be processed.");
+  if (importBatch.organizationId !== session.organizationId) {
+    throw new Error("Import batch does not belong to the active organization.");
   }
 
-  await prisma.importBatch.update({
-    where: { id: importBatch.id },
+  if (isCompletedImportStatus(importBatch.status)) {
+    return getImportSummary(importBatch);
+  }
+
+  const lockResult = await prisma.importBatch.updateMany({
+    where: {
+      id: importBatch.id,
+      organizationId: importBatch.organizationId,
+      status: ImportStatus.PENDING,
+    },
     data: {
       status: ImportStatus.PROCESSING,
       processingError: null,
       completedAt: null,
+    },
+  });
+
+  if (!didAcquireProcessingLock(lockResult.count)) {
+    const currentBatch = await prisma.importBatch.findUnique({
+      where: { id: importBatch.id },
+      select: {
+        status: true,
+        totalRows: true,
+        validRows: true,
+        errorRows: true,
+        duplicateRows: true,
+        completedAt: true,
+        processingError: true,
+      },
+    });
+
+    if (currentBatch && isCompletedImportStatus(currentBatch.status)) {
+      return getImportSummary(currentBatch);
+    }
+
+    throw new Error("Import batch is already being processed.");
+  }
+
+  await createImportAuditLog({
+    organizationId: importBatch.organizationId,
+    userId: session.userId,
+    importBatchId: importBatch.id,
+    action: "IMPORT_PROCESSING_STARTED",
+    metadata: {
+      organizationId: importBatch.organizationId,
+      userId: session.userId,
+      importBatchId: importBatch.id,
+      timestamp: new Date().toISOString(),
     },
   });
 
@@ -94,9 +181,9 @@ export async function processImportBatch(importBatchId: string) {
     const preparedImport = prepareImportRows(csvText, importBatch.sourceType, importBatch.id);
 
     await prisma.$transaction(async (tx) => {
-      await tx.importRow.deleteMany({ where: { importBatchId: importBatch.id } });
+      const existingRows = await tx.importRow.count({ where: { importBatchId: importBatch.id } });
 
-      if (preparedImport.rows.length > 0) {
+      if (existingRows === 0 && preparedImport.rows.length > 0) {
         await tx.importRow.createMany({
           data: preparedImport.rows.map((row) => ({
             organizationId: importBatch.organizationId,
@@ -110,22 +197,25 @@ export async function processImportBatch(importBatchId: string) {
           })),
         });
       }
+    });
 
-      if (importBatch.sourceType === SourceType.BANK) {
-        const validRows = await tx.importRow.findMany({
-          where: {
-            organizationId: importBatch.organizationId,
-            importBatchId: importBatch.id,
-            validationStatus: ImportRowStatus.VALID,
-          },
-          select: {
-            id: true,
-            normalizedData: true,
-          },
-          orderBy: { rowNumber: "asc" },
-        });
+    const validRows = await prisma.importRow.findMany({
+      where: {
+        organizationId: importBatch.organizationId,
+        importBatchId: importBatch.id,
+        validationStatus: ImportRowStatus.VALID,
+        createdTransactionId: null,
+      },
+      select: {
+        id: true,
+        normalizedData: true,
+      },
+      orderBy: { rowNumber: "asc" },
+    });
 
-        for (const row of validRows) {
+    for (const row of validRows) {
+      try {
+        await prisma.$transaction(async (tx) => {
           const normalizedData = parseNormalizedTransactionData(row.normalizedData);
           const externalFingerprint = getTransactionFingerprint(normalizedData);
           const existingTransaction = await tx.transaction.findUnique({
@@ -139,19 +229,15 @@ export async function processImportBatch(importBatchId: string) {
           });
 
           if (existingTransaction) {
-            await tx.importRow.updateMany({
-              where: {
-                id: row.id,
-                organizationId: importBatch.organizationId,
-                importBatchId: importBatch.id,
-              },
+            await tx.importRow.update({
+              where: { id: row.id },
               data: {
                 validationStatus: ImportRowStatus.DUPLICATE,
                 errorMessages: ["Transaction already exists for this organization."],
               },
             });
 
-            continue;
+            return;
           }
 
           const transaction = await tx.transaction.create({
@@ -166,63 +252,145 @@ export async function processImportBatch(importBatchId: string) {
               description: normalizedData.description,
               reference: normalizedData.reference || null,
               vendor: normalizedData.vendor || null,
-              sourceType: SourceType.BANK,
+              sourceType: importBatch.sourceType,
               externalFingerprint,
             },
             select: { id: true },
           });
 
-          await tx.importRow.updateMany({
-            where: {
-              id: row.id,
-              organizationId: importBatch.organizationId,
-              importBatchId: importBatch.id,
-            },
+          await tx.importRow.update({
+            where: { id: row.id },
             data: {
               validationStatus: ImportRowStatus.PROCESSED,
               createdTransactionId: transaction.id,
             },
           });
-        }
-      }
+        });
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+          await prisma.importRow.update({
+            where: { id: row.id },
+            data: {
+              validationStatus: ImportRowStatus.DUPLICATE,
+              errorMessages: ["Transaction already exists for this organization."],
+            },
+          });
 
-      await tx.importBatch.update({
+          continue;
+        }
+
+        await prisma.importRow.update({
+          where: { id: row.id },
+          data: {
+            validationStatus: ImportRowStatus.INVALID,
+            errorMessages: [error instanceof Error ? error.message : "Transaction creation failed."],
+          },
+        });
+      }
+    }
+
+    const summary = await prisma.$transaction(async (tx) => {
+      const rowCounts = await tx.importRow.groupBy({
+        by: ["validationStatus"],
+        where: {
+          organizationId: importBatch.organizationId,
+          importBatchId: importBatch.id,
+        },
+        _count: { _all: true },
+      });
+
+      const invalidRows = rowCounts.find((row) => row.validationStatus === ImportRowStatus.INVALID)?._count._all ?? 0;
+      const duplicateRows = rowCounts.find((row) => row.validationStatus === ImportRowStatus.DUPLICATE)?._count._all ?? 0;
+      const processedRows = rowCounts.find((row) => row.validationStatus === ImportRowStatus.PROCESSED)?._count._all ?? 0;
+      const failedRows = rowCounts.find((row) => row.validationStatus === ImportRowStatus.VALID)?._count._all ?? 0;
+      const completedStatus = getCompletedImportStatus({ invalidRows, duplicateRows, failedRows });
+      const completedAt = new Date();
+
+      const completedBatch = await tx.importBatch.update({
         where: { id: importBatch.id },
         data: {
-          status: ImportStatus.COMPLETED,
+          status: completedStatus,
           totalRows: preparedImport.totalRows,
-          validRows: preparedImport.validRows,
-          errorRows: preparedImport.invalidRows,
-          duplicateRows: preparedImport.duplicateRows,
+          validRows: processedRows,
+          errorRows: invalidRows + failedRows,
+          duplicateRows,
           columnMapping: preparedImport.columnMapping,
-          completedAt: new Date(),
+          processingError: null,
+          completedAt,
+        },
+        select: {
+          status: true,
+          totalRows: true,
+          validRows: true,
+          errorRows: true,
+          duplicateRows: true,
+          completedAt: true,
+          processingError: true,
         },
       });
 
-      await tx.auditLog.create({
-        data: {
+      const existingCompletedAuditLog = await tx.auditLog.findFirst({
+        where: {
           organizationId: importBatch.organizationId,
-          actorUserId: importBatch.createdBy,
-          action: "TRANSACTION_IMPORT_COMPLETED",
+          action: "IMPORT_COMPLETED",
           resourceType: "importBatch",
           resourceId: importBatch.id,
-          metadata: {
-            user: importBatch.createdBy,
-            organization: importBatch.organizationId,
-            importBatch: importBatch.id,
-          },
         },
+        select: { id: true },
       });
+
+      if (shouldCreateAuditEvent(existingCompletedAuditLog ? 1 : 0)) {
+        await tx.auditLog.create({
+          data: {
+            organizationId: importBatch.organizationId,
+            actorUserId: session.userId,
+            action: "IMPORT_COMPLETED",
+            resourceType: "importBatch",
+            resourceId: importBatch.id,
+            metadata: {
+              organizationId: importBatch.organizationId,
+              userId: session.userId,
+              importBatchId: importBatch.id,
+              timestamp: completedAt.toISOString(),
+              status: completedStatus,
+              totalRows: preparedImport.totalRows,
+              validRows: processedRows,
+              invalidRows,
+              duplicateRows,
+              failedRows,
+            },
+          },
+        });
+      }
+
+      return getImportSummary(completedBatch);
     });
 
-    return preparedImport;
+    return summary;
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Import processing failed.";
+    const failedAt = new Date();
+
     await prisma.importBatch.update({
       where: { id: importBatch.id },
       data: {
         status: ImportStatus.FAILED,
-        processingError: error instanceof Error ? error.message : "Import processing failed.",
-        completedAt: new Date(),
+        processingError: errorMessage,
+        completedAt: failedAt,
+      },
+    });
+
+    await createImportAuditLog({
+      organizationId: importBatch.organizationId,
+      userId: session.userId,
+      importBatchId: importBatch.id,
+      action: "IMPORT_FAILED",
+      metadata: {
+        organizationId: importBatch.organizationId,
+        userId: session.userId,
+        importBatchId: importBatch.id,
+        timestamp: failedAt.toISOString(),
+        error: errorMessage,
       },
     });
 
