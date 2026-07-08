@@ -150,6 +150,7 @@ model ImportBatch {
   transactions   Transaction[]
 
   @@unique([organizationId, fileHash])
+  @@unique([organizationId, id])
   @@index([organizationId, createdAt])
   @@index([organizationId, status])
   @@map("import_batches")
@@ -201,7 +202,7 @@ model Transaction {
   adjustments         TransactionAdjustment[]
   notes               TransactionReviewNote[]
   bankAccount         BankAccount?            @relation(fields: [bankAccountId], references: [id])
-  importBatch         ImportBatch?            @relation(fields: [importBatchId], references: [id])
+  importBatch         ImportBatch?            @relation(fields: [organizationId, importBatchId], references: [organizationId, id], onDelete: NoAction, onUpdate: Cascade)
   organization        Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@unique([organizationId, externalFingerprint])
