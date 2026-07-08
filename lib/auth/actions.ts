@@ -4,13 +4,13 @@ import { compare, hash } from "bcryptjs";
 import { redirect } from "next/navigation";
 import { authenticateLogin, formValue, registerFirstAdmin, type AuthFormState } from "@/lib/auth/core";
 export type { AuthFormState } from "@/lib/auth/core";
-import { clearSession, setSession } from "@/lib/auth/session";
+import { clearSession, createSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db/client";
 import { t } from "@/lib/i18n";
 import { forgotPasswordSchema } from "@/lib/validations/auth";
 
 async function createSessionForUser(userId: string) {
-  const membership = await prisma.membership.findFirst({
+  const memberships = await prisma.membership.findMany({
     where: {
       userId,
       status: "ACTIVE",
@@ -22,22 +22,20 @@ async function createSessionForUser(userId: string) {
       role: true,
     },
     orderBy: { createdAt: "asc" },
+    take: 2,
   });
 
-  if (!membership) {
+  if (memberships.length !== 1) {
     return { ok: false, message: t("auth.messages.noActiveMembership") };
   }
 
-  await setSession({
-    userId: membership.user.id,
-    email: membership.user.email,
-    fullName: membership.user.fullName,
-    organizationId: membership.organization.id,
-    organizationName: membership.organization.name,
-    membershipId: membership.id,
-    roleId: membership.role.id,
-    roleName: membership.role.name,
-  });
+  const [membership] = memberships;
+
+  if (!membership || membership.role.organizationId !== membership.organizationId) {
+    return { ok: false, message: t("auth.messages.noActiveMembership") };
+  }
+
+  await createSession(membership.user.id, membership.id);
 
   return { ok: true, message: "" };
 }

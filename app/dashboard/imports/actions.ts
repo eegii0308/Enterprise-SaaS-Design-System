@@ -1,0 +1,102 @@
+"use server";
+
+import { createHash } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { ImportStatus, Prisma, SourceType } from "@prisma/client";
+import { revalidatePath } from "next/cache";
+import { prisma } from "@/lib/db/client";
+import { getImportStoragePath } from "@/lib/imports/storage";
+import { requirePermission } from "@/lib/permissions/authorize";
+
+export type UploadImportState = {
+  status: "idle" | "success" | "error";
+  message: string;
+};
+
+const acceptedCsvTypes = new Set(["text/csv", "application/csv", "application/vnd.ms-excel"]);
+const maxFileSizeBytes = 20 * 1024 * 1024;
+
+function isSourceType(value: FormDataEntryValue | null): value is SourceType {
+  return value === SourceType.BANK || value === SourceType.LEDGER;
+}
+
+function getSafeFileName(fileName: string) {
+  const trimmedName = fileName.trim().replaceAll("\\", "/").split("/").pop() ?? "upload.csv";
+  const safeName = trimmedName.replace(/[^a-zA-Z0-9._-]/g, "_");
+
+  return safeName || "upload.csv";
+}
+
+function isCsvFile(file: File) {
+  const lowerName = file.name.toLowerCase();
+  return lowerName.endsWith(".csv") || acceptedCsvTypes.has(file.type);
+}
+
+export async function uploadImportAction(
+  _previousState: UploadImportState,
+  formData: FormData,
+): Promise<UploadImportState> {
+  const session = await requirePermission("imports.create");
+  const sourceType = formData.get("sourceType");
+  const fileEntry = formData.get("file");
+
+  if (!isSourceType(sourceType)) {
+    return { status: "error", message: "Select whether this CSV is a bank or ledger import." };
+  }
+
+  if (!(fileEntry instanceof File) || fileEntry.size === 0) {
+    return { status: "error", message: "Choose a non-empty CSV file to upload." };
+  }
+
+  if (!isCsvFile(fileEntry)) {
+    return { status: "error", message: "Only CSV files are supported in this phase." };
+  }
+
+  if (fileEntry.size > maxFileSizeBytes) {
+    return { status: "error", message: "CSV files must be 20 MB or smaller." };
+  }
+
+  const fileBytes = Buffer.from(await fileEntry.arrayBuffer());
+  const fileHash = createHash("sha256").update(fileBytes).digest("hex");
+  const safeFileName = getSafeFileName(fileEntry.name);
+  const fileStorageKey = `organizations/${session.organizationId}/imports/${fileHash}/${safeFileName}`;
+
+  try {
+    const storagePath = getImportStoragePath(fileStorageKey);
+
+    await mkdir(path.dirname(storagePath), { recursive: true });
+    await writeFile(storagePath, fileBytes);
+
+    const importBatch = await prisma.importBatch.create({
+      data: {
+        organizationId: session.organizationId,
+        sourceType,
+        fileName: fileEntry.name,
+        fileSize: fileEntry.size,
+        fileStorageKey,
+        fileHash,
+        createdBy: session.userId,
+        status: ImportStatus.PENDING,
+      },
+      select: { id: true },
+    });
+
+    revalidatePath("/dashboard");
+    revalidatePath("/dashboard/imports");
+
+    return {
+      status: "success",
+      message: `Upload recorded as import batch ${importBatch.id}. Processing has not started yet.`,
+    };
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return {
+        status: "error",
+        message: "This file has already been uploaded for your organization.",
+      };
+    }
+
+    return { status: "error", message: "The upload could not be recorded. Please try again." };
+  }
+}
