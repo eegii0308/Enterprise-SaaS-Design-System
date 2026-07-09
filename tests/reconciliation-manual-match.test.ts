@@ -468,3 +468,19 @@ test("removeManualMatch rejects removal when the parent run is approved", async 
   assert.equal(db.state.matchUpdates.length, 0);
   assert.equal(db.state.updates.length, 0);
 });
+
+test("removeManualMatch fails when a concurrent submit wins the run-lock race", async () => {
+  // The parent run still reads as IN_PROGRESS (not locked), but a concurrent
+  // submitReconciliationRunForReview wins the row lock first and transitions
+  // it to READY_FOR_REVIEW before this request's status-preserving CAS runs,
+  // so the CAS's updateMany matches zero rows.
+  const db = createDatabase({ runLockCount: 0 });
+
+  await assert.rejects(
+    removeManualMatch(removeInput, context, db),
+    (error) => error instanceof ManualMatchError && error.code === "CONFLICT",
+  );
+  assert.equal(db.state.runLockCalls.length, 1);
+  assert.equal(db.state.matchUpdates.length, 0);
+  assert.equal(db.state.updates.length, 0);
+});

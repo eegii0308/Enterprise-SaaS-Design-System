@@ -24,7 +24,12 @@ Current code writes audit logs for:
 - Import processing start in `lib/imports/processor.ts`
 - Import completion in `lib/imports/processor.ts`
 - Import failure in `lib/imports/processor.ts`
-- Manual reconciliation match creation in `lib/reconciliation/manual-match.ts`
+- Manual reconciliation match creation (`RECONCILIATION_MATCH_CREATED`) in `lib/reconciliation/manual-match.ts`
+- Manual reconciliation match removal (`RECONCILIATION_MATCH_REMOVED`) in `lib/reconciliation/manual-match.ts`
+- Manual reconciliation match correction (`RECONCILIATION_MATCH_CORRECTED`) in `lib/reconciliation/manual-match.ts`
+- Reconciliation run submission for review (`RECONCILIATION_RUN_SUBMITTED`) in `lib/reconciliation/run-lifecycle.ts`
+- Reconciliation run approval (`RECONCILIATION_RUN_APPROVED`) in `lib/reconciliation/run-lifecycle.ts`
+- Reconciliation run reopening (`RECONCILIATION_RUN_REOPENED`) in `lib/reconciliation/run-lifecycle.ts`
 
 ## Current Limitations
 
@@ -47,7 +52,8 @@ Required event categories:
 - Transaction correction events.
 - Transaction review note events.
 - Manual match creation.
-- Match rejection or removal.
+- Match rejection, removal, or correction.
+- Reconciliation run submission for review.
 - Reconciliation run approval.
 - Reconciliation run reopening.
 - Report generation.

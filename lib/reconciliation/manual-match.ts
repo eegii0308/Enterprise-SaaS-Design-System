@@ -245,6 +245,34 @@ function assertRunNotLocked(run: RunStatusRecord | null) {
   }
 }
 
+async function assertRunEditable(tx: ManualMatchTransactionClient, run: RunStatusRecord | null, organizationId: string) {
+  assertRunNotLocked(run);
+
+  if (!run) {
+    return;
+  }
+
+  // Status-preserving CAS: locks the run row and re-verifies its status is
+  // unchanged, so a concurrent submitReconciliationRunForReview/approval that
+  // transitions the run to READY_FOR_REVIEW or APPROVED between the read
+  // above and this point cannot let a match removal/correction slip through.
+  const lockResult = await tx.reconciliationRun.updateMany({
+    where: {
+      id: run.id,
+      organizationId,
+      status: run.status,
+    },
+    data: { status: run.status },
+  });
+
+  if (lockResult.count === 0) {
+    throw new ManualMatchError(
+      "Matches cannot be changed once their reconciliation run is submitted for review or approved.",
+      "CONFLICT",
+    );
+  }
+}
+
 const openRunStatuses: ReconciliationRunStatus[] = [
   ReconciliationRunStatus.DRAFT,
   ReconciliationRunStatus.IN_PROGRESS,
@@ -446,7 +474,7 @@ export async function removeManualMatch(
       where: { id: match.reconciliationRunId },
       select: { id: true, status: true },
     });
-    assertRunNotLocked(run);
+    await assertRunEditable(tx, run, context.organizationId);
 
     const removedAt = new Date();
     await tx.reconciliationMatch.update({
@@ -525,7 +553,7 @@ export async function correctManualMatch(
       where: { id: match.reconciliationRunId },
       select: { id: true, status: true },
     });
-    assertRunNotLocked(run);
+    await assertRunEditable(tx, run, context.organizationId);
 
     const replacementTransactions = await tx.transaction.findMany({
       where: { id: { in: [replacementTransactionId] } },
