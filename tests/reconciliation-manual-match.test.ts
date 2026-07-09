@@ -484,3 +484,33 @@ test("removeManualMatch fails when a concurrent submit wins the run-lock race", 
   assert.equal(db.state.matchUpdates.length, 0);
   assert.equal(db.state.updates.length, 0);
 });
+
+test("removeManualMatch fails when a concurrent correctManualMatch wins the match CAS race", async () => {
+  // Simulates correctManualMatch winning the atomic CONFIRMED -> REMOVED
+  // transition for the same match first (e.g. replacing the ledger side and
+  // creating a new confirmed replacement match). This request still reads
+  // the match as CONFIRMED and the parent run as editable, but its own
+  // removal CAS finds the match already REMOVED (count 0) and must fail
+  // before reverting transaction statuses -- otherwise it would incorrectly
+  // unmatch the transaction still referenced by the winning correction's new
+  // confirmed match.
+  const db = createDatabase({ matchClaimCount: 0 });
+
+  await assert.rejects(
+    removeManualMatch(removeInput, context, db),
+    (error) => error instanceof ManualMatchError && error.code === "CONFLICT",
+  );
+  assert.equal(db.state.runLockCalls.length, 1);
+  assert.equal(db.state.matchClaimCalls.length, 1);
+  const removalAttempt = db.state.matchClaimCalls[0] as {
+    where: { id: string; status: string };
+    data: { status: string };
+  };
+  assert.equal(removalAttempt.where.id, "match-1");
+  assert.equal(removalAttempt.where.status, "CONFIRMED");
+  assert.equal(removalAttempt.data.status, "REMOVED");
+  // No transaction statuses were touched, so the replacement match's
+  // transactions (and any transaction this stale read still pointed at)
+  // remain exactly as the winning correction left them.
+  assert.equal(db.state.updates.length, 0);
+});

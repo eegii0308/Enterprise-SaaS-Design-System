@@ -477,14 +477,30 @@ export async function removeManualMatch(
     await assertRunEditable(tx, run, context.organizationId);
 
     const removedAt = new Date();
-    await tx.reconciliationMatch.update({
-      where: { id: match.id },
+
+    // Atomic CAS: only transitions the match to REMOVED if it is still
+    // CONFIRMED at write time, mirroring correctManualMatch's removal CAS so
+    // a concurrent correction or removal of the same match cannot both
+    // succeed (and so this request cannot revert transaction statuses based
+    // on a match that a concurrent correction already replaced).
+    const removalResult = await tx.reconciliationMatch.updateMany({
+      where: {
+        id: match.id,
+        status: ReconciliationMatchStatus.CONFIRMED,
+      },
       data: {
         status: ReconciliationMatchStatus.REMOVED,
         removedBy: context.userId,
         removedAt,
       },
     });
+
+    if (removalResult.count === 0) {
+      throw new ManualMatchError(
+        "Reconciliation match changed before it could be removed. Please retry.",
+        "CONFLICT",
+      );
+    }
 
     await tx.transaction.update({
       where: { id: match.bankTransactionId },
