@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-07-09
+
+### Added
+
+- Implemented the reconciliation run lifecycle workflow: draft/in_progress/reopened runs can be submitted for review, and ready-for-review runs can be approved (`lib/reconciliation/run-lifecycle.ts`).
+- Added server-side permission enforcement for reconciliation actions: `reconciliation.run` for manual matching and submission for review, `reconciliation.approve` for run approval.
+- Added audit log events for reconciliation run submission (`RECONCILIATION_RUN_SUBMITTED`) and approval (`RECONCILIATION_RUN_APPROVED`).
+- Hardened reconciliation concurrency: atomic transaction-status claims prevent duplicate confirmed matches, and compare-and-swap (CAS) run status transitions keep manual matching, submission, and approval consistent under concurrent requests.
+
 ## 2026-07-07
 
 ## Version 0.1.0

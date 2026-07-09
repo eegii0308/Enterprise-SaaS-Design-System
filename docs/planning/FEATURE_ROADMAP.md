@@ -46,7 +46,7 @@ The product should first become a working reconciliation SaaS, not a complete en
 
 ## Phase 4: Reconciliation
 
-Status: Manual match creation and confirmed-match removal (unmatch) are implemented in the reconciliation workspace, backed by automated tests. Match rejection, exception status, the full run lifecycle, and approval permissions are not yet implemented.
+Status: Manual match creation, confirmed-match removal (unmatch), and the full reconciliation run lifecycle (submit for review, approve) are implemented in the reconciliation workspace, backed by automated tests. Match rejection and exception status are not yet implemented.
 
 - Implement reconciliation run creation. (done — a manual run is created automatically on the first confirmed match)
 - Show unmatched bank and ledger transactions. (done)
@@ -55,10 +55,11 @@ Status: Manual match creation and confirmed-match removal (unmatch) are implemen
 - Support match removal (unmatch) of confirmed matches, reverting both transactions to unmatched. (done)
 - Update transaction statuses after confirmed matches. (done)
 - Add exception status and review notes. (not yet implemented)
-- Add lifecycle states: draft, in progress, ready for review, approved, reopened. (draft, in progress, and reopened only; ready for review and approved are not yet reachable)
-- Add approval permissions and audit logs. (audit logs for match creation and removal done; `reconciliation.approve` permission exists but is not yet enforced by any workflow)
+- Add lifecycle states: draft, in progress, ready for review, approved, reopened. (done — submit-for-review and approval transitions are implemented)
+- Lock matches from being created or removed while a run is ready for review or approved. (done)
+- Add approval permissions and audit logs. (done — `reconciliation.run` and `reconciliation.approve` are enforced server-side, and match creation, match removal, run submission, and run approval each write audit log events)
 
-Next planned work: match rejection, exception marking, and the ready-for-review/approved run lifecycle with approval permission enforcement.
+Next planned work: match rejection and exception marking for unresolved records.
 
 ## Phase 5: Audit And Controls
 
