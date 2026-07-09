@@ -3,14 +3,36 @@
 import { createContext, useContext, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { SourceType } from "@prisma/client";
-import { AlertTriangle, CheckCircle2, Link2, Loader2, Send, ShieldCheck, Unlink } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Link2, Loader2, PencilLine, RotateCcw, Send, ShieldCheck, Unlink } from "lucide-react";
 import {
   manuallyMatchTransactionsAction,
   removeManualMatchAction,
+  correctManualMatchAction,
   submitReconciliationRunForReviewAction,
   approveReconciliationRunAction,
+  reopenReconciliationRunAction,
 } from "./actions";
 import { Button } from "@/src/app/components/ui/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/src/app/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/src/app/components/ui/alert-dialog";
 
 type SelectionState = {
   bankTransactionId: string | null;
@@ -143,6 +165,152 @@ export function RemoveMatchButton({ reconciliationMatchId, locked = false }: { r
   );
 }
 
+type CorrectionCandidate = { id: string; label: string };
+
+export function CorrectMatchButton({
+  reconciliationMatchId,
+  locked = false,
+  currentBankLabel,
+  currentLedgerLabel,
+  bankCandidates,
+  ledgerCandidates,
+}: {
+  reconciliationMatchId: string;
+  locked?: boolean;
+  currentBankLabel: string;
+  currentLedgerLabel: string;
+  bankCandidates: CorrectionCandidate[];
+  ledgerCandidates: CorrectionCandidate[];
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [side, setSide] = useState<"" | "bank" | "ledger">("");
+  const [replacementTransactionId, setReplacementTransactionId] = useState("");
+  const [reason, setReason] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  const candidates = side === "bank" ? bankCandidates : side === "ledger" ? ledgerCandidates : [];
+  const canSubmit = side !== "" && replacementTransactionId !== "" && reason.trim().length > 0 && !isPending;
+
+  function resetForm() {
+    setSide("");
+    setReplacementTransactionId("");
+    setReason("");
+    setFormError(null);
+  }
+
+  function handleOpenChange(nextOpen: boolean) {
+    setOpen(nextOpen);
+    if (!nextOpen) {
+      resetForm();
+    }
+  }
+
+  function handleSubmit() {
+    if (!canSubmit) {
+      return;
+    }
+
+    startTransition(async () => {
+      const response = await correctManualMatchAction({
+        reconciliationMatchId,
+        replacementBankTransactionId: side === "bank" ? replacementTransactionId : undefined,
+        replacementLedgerTransactionId: side === "ledger" ? replacementTransactionId : undefined,
+        reason,
+      });
+
+      if (response.ok) {
+        setOpen(false);
+        resetForm();
+        router.refresh();
+      } else {
+        setFormError(response.message);
+      }
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogTrigger asChild>
+        <Button type="button" variant="outline" disabled={locked} className="gap-2">
+          <PencilLine size={16} aria-hidden="true" />
+          Correct match
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Correct match</DialogTitle>
+          <DialogDescription>
+            Replace one side of this match with a different transaction. The replaced transaction returns to Unmatched and
+            this match is kept as history.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-semibold text-slate-600">Side to replace</span>
+            <select
+              value={side}
+              onChange={(event) => {
+                setSide(event.target.value as "" | "bank" | "ledger");
+                setReplacementTransactionId("");
+              }}
+              className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950"
+            >
+              <option value="">Select a side</option>
+              <option value="bank">Bank transaction ({currentBankLabel})</option>
+              <option value="ledger">Ledger transaction ({currentLedgerLabel})</option>
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-semibold text-slate-600">Replacement transaction</span>
+            <select
+              value={replacementTransactionId}
+              onChange={(event) => setReplacementTransactionId(event.target.value)}
+              disabled={side === ""}
+              className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 disabled:opacity-50"
+            >
+              <option value="">{side === "" ? "Select a side first" : "Select a transaction"}</option>
+              {candidates.map((candidate) => (
+                <option key={candidate.id} value={candidate.id}>
+                  {candidate.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-semibold text-slate-600">Correction reason</span>
+            <textarea
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              rows={3}
+              placeholder="Explain why this match is being corrected"
+              className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 placeholder:text-slate-400"
+            />
+          </label>
+
+          {formError ? <p className="text-xs text-red-700">{formError}</p> : null}
+        </div>
+
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button type="button" variant="outline">
+              Cancel
+            </Button>
+          </DialogClose>
+          <Button type="button" onClick={handleSubmit} disabled={!canSubmit} className="gap-2">
+            {isPending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <PencilLine size={16} aria-hidden="true" />}
+            Save correction
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function SubmitRunButton({ reconciliationRunId, disabled = false }: { reconciliationRunId: string; disabled?: boolean }) {
   const router = useRouter();
   const [result, setResult] = useState<SubmitResult>({ status: "idle" });
@@ -196,6 +364,84 @@ export function ApproveRunButton({ reconciliationRunId }: { reconciliationRunId:
       </Button>
       {result.status === "error" ? <p className="text-xs text-red-700">{result.message}</p> : null}
     </div>
+  );
+}
+
+export function ReopenRunButton({ reconciliationRunId }: { reconciliationRunId: string }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  const canSubmit = reason.trim().length > 0 && !isPending;
+
+  function handleOpenChange(nextOpen: boolean) {
+    setOpen(nextOpen);
+    if (!nextOpen) {
+      setReason("");
+      setFormError(null);
+    }
+  }
+
+  function handleConfirm() {
+    if (!canSubmit) {
+      return;
+    }
+
+    startTransition(async () => {
+      const response = await reopenReconciliationRunAction({ reconciliationRunId, reason });
+
+      if (response.ok) {
+        setOpen(false);
+        setReason("");
+        setFormError(null);
+        router.refresh();
+      } else {
+        setFormError(response.message);
+      }
+    });
+  }
+
+  return (
+    <AlertDialog open={open} onOpenChange={handleOpenChange}>
+      <AlertDialogTrigger asChild>
+        <Button type="button" variant="outline" className="gap-2">
+          <RotateCcw size={16} aria-hidden="true" />
+          Reopen run
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Reopen this reconciliation run?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This reverses the run&apos;s approval and returns it to Reopened so matches can be corrected. This action
+            cannot be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+
+        <label className="flex flex-col gap-1">
+          <span className="text-xs font-semibold text-slate-600">Reason</span>
+          <textarea
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            rows={3}
+            placeholder="Explain why this run is being reopened"
+            className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 placeholder:text-slate-400"
+          />
+        </label>
+
+        {formError ? <p className="text-xs text-red-700">{formError}</p> : null}
+
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <Button type="button" onClick={handleConfirm} disabled={!canSubmit} className="gap-2">
+            {isPending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <RotateCcw size={16} aria-hidden="true" />}
+            Reopen run
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 

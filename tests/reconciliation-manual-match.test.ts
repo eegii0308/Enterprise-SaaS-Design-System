@@ -43,8 +43,10 @@ type MockState = {
   createdRuns: unknown[];
   claimCount?: number;
   runLockCount?: number;
+  matchClaimCount?: number;
   transactionClaimCalls: unknown[];
   runLockCalls: unknown[];
+  matchClaimCalls: unknown[];
 };
 
 const baseInput: ManualMatchInput = {
@@ -106,6 +108,7 @@ function createDatabase(state: Partial<MockState> = {}): ManualMatchDatabase & {
     createdRuns: [],
     transactionClaimCalls: [],
     runLockCalls: [],
+    matchClaimCalls: [],
     ...state,
   };
 
@@ -140,6 +143,11 @@ function createDatabase(state: Partial<MockState> = {}): ManualMatchDatabase & {
           async update(args) {
             fullState.matchUpdates.push(args);
             return {};
+          },
+          async updateMany(args) {
+            fullState.matchClaimCalls.push(args);
+            fullState.matchUpdates.push(args);
+            return { count: fullState.matchClaimCount ?? 1 };
           },
         },
         reconciliationRun: {

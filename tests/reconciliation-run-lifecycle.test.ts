@@ -4,10 +4,12 @@ import { ReconciliationRunStatus } from "@prisma/client";
 import {
   submitReconciliationRunForReview,
   approveReconciliationRun,
+  reopenReconciliationRun,
   selectCurrentRun,
   type RunLifecycleDatabase,
   type SubmitRunInput,
   type ApproveRunInput,
+  type ReopenRunInput,
   RunLifecycleError,
 } from "../lib/reconciliation/run-lifecycle.ts";
 
@@ -83,6 +85,7 @@ function createDatabase(state: Partial<MockState> = {}): RunLifecycleDatabase & 
 
 const submitInput: SubmitRunInput = { reconciliationRunId: "run-1" };
 const approveInput: ApproveRunInput = { reconciliationRunId: "run-1" };
+const reopenInput: ReopenRunInput = { reconciliationRunId: "run-1", reason: "Discrepancy found after approval" };
 
 test("submitReconciliationRunForReview transitions an in-progress run to ready for review and audits it", async () => {
   const db = createDatabase();
@@ -278,6 +281,135 @@ test("approveReconciliationRun rejects a missing reconciliationRunId", async () 
     approveReconciliationRun({ reconciliationRunId: "" }, context, db),
     (error) => error instanceof RunLifecycleError && error.code === "VALIDATION",
   );
+});
+
+test("reopenReconciliationRun transitions an approved run to reopened and audits it", async () => {
+  const db = createDatabase({ run: run({ status: ReconciliationRunStatus.APPROVED }) });
+
+  const result = await reopenReconciliationRun(reopenInput, context, db);
+
+  assert.deepEqual(result, { reconciliationRunId: "run-1", status: ReconciliationRunStatus.REOPENED });
+  assert.equal(db.state.runUpdates.length, 1);
+  const update = db.state.runUpdates[0] as {
+    where: { id: string; organizationId: string; status: string };
+    data: Record<string, unknown>;
+  };
+  assert.equal(update.where.id, "run-1");
+  assert.equal(update.where.organizationId, "org-1");
+  assert.equal(update.where.status, "APPROVED");
+  assert.equal(update.data.status, "REOPENED");
+  assert.equal(update.data.reopenedBy, "user-1");
+  assert.ok(update.data.reopenedAt instanceof Date);
+
+  assert.equal(db.state.auditLogs.length, 1);
+  const auditLog = db.state.auditLogs[0] as {
+    data: { organizationId: string; actorUserId: string; action: string; resourceId: string; metadata: Record<string, string> };
+  };
+  assert.equal(auditLog.data.organizationId, "org-1");
+  assert.equal(auditLog.data.actorUserId, "user-1");
+  assert.equal(auditLog.data.action, "RECONCILIATION_RUN_REOPENED");
+  assert.equal(auditLog.data.resourceId, "run-1");
+  assert.equal(auditLog.data.metadata.reconciliationRunId, "run-1");
+  assert.equal(auditLog.data.metadata.reason, "Discrepancy found after approval");
+  assert.match(auditLog.data.metadata.timestamp, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test("reopenReconciliationRun preserves approvedBy, approvedAt, and completedAt", async () => {
+  const db = createDatabase({ run: run({ status: ReconciliationRunStatus.APPROVED }) });
+
+  await reopenReconciliationRun(reopenInput, context, db);
+
+  const update = db.state.runUpdates[0] as { data: Record<string, unknown> };
+  assert.equal("approvedBy" in update.data, false);
+  assert.equal("approvedAt" in update.data, false);
+  assert.equal("completedAt" in update.data, false);
+});
+
+test("reopenReconciliationRun rejects a draft run", async () => {
+  const db = createDatabase({ run: run({ status: ReconciliationRunStatus.DRAFT }) });
+
+  await assert.rejects(
+    reopenReconciliationRun(reopenInput, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "CONFLICT",
+  );
+  assert.equal(db.state.runUpdates.length, 0);
+});
+
+test("reopenReconciliationRun rejects an in-progress run", async () => {
+  const db = createDatabase({ run: run({ status: ReconciliationRunStatus.IN_PROGRESS }) });
+
+  await assert.rejects(
+    reopenReconciliationRun(reopenInput, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "CONFLICT",
+  );
+  assert.equal(db.state.runUpdates.length, 0);
+});
+
+test("reopenReconciliationRun rejects a run that is ready for review", async () => {
+  const db = createDatabase({ run: run({ status: ReconciliationRunStatus.READY_FOR_REVIEW }) });
+
+  await assert.rejects(
+    reopenReconciliationRun(reopenInput, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "CONFLICT",
+  );
+  assert.equal(db.state.runUpdates.length, 0);
+});
+
+test("reopenReconciliationRun rejects a run that is already reopened", async () => {
+  const db = createDatabase({ run: run({ status: ReconciliationRunStatus.REOPENED }) });
+
+  await assert.rejects(
+    reopenReconciliationRun(reopenInput, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "CONFLICT",
+  );
+  assert.equal(db.state.runUpdates.length, 0);
+});
+
+test("reopenReconciliationRun rejects a missing reason", async () => {
+  const db = createDatabase({ run: run({ status: ReconciliationRunStatus.APPROVED }) });
+
+  await assert.rejects(
+    reopenReconciliationRun({ reconciliationRunId: "run-1", reason: "" }, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "VALIDATION",
+  );
+  await assert.rejects(
+    reopenReconciliationRun({ reconciliationRunId: "run-1", reason: "   " }, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "VALIDATION",
+  );
+  assert.equal(db.state.runUpdates.length, 0);
+});
+
+test("reopenReconciliationRun rejects a missing reconciliationRunId", async () => {
+  const db = createDatabase({ run: run({ status: ReconciliationRunStatus.APPROVED }) });
+
+  await assert.rejects(
+    reopenReconciliationRun({ reconciliationRunId: "", reason: "Valid reason" }, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "VALIDATION",
+  );
+  assert.equal(db.state.runUpdates.length, 0);
+});
+
+test("reopenReconciliationRun rejects a run from another organization", async () => {
+  const db = createDatabase({ run: run({ organizationId: "org-2", status: ReconciliationRunStatus.APPROVED }) });
+
+  await assert.rejects(
+    reopenReconciliationRun(reopenInput, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "FORBIDDEN",
+  );
+  assert.equal(db.state.runUpdates.length, 0);
+});
+
+test("reopenReconciliationRun rejects when a concurrent reopen or approval already won the transition", async () => {
+  // Simulates a concurrent reopen (or a new approval cycle) winning the race
+  // for the same run row before this request's status-scoped CAS runs.
+  const db = createDatabase({ run: run({ status: ReconciliationRunStatus.APPROVED }), transitionCount: 0 });
+
+  await assert.rejects(
+    reopenReconciliationRun(reopenInput, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "CONFLICT",
+  );
+  assert.equal(db.state.runUpdates.length, 1);
+  assert.equal(db.state.auditLogs.length, 0);
 });
 
 test("selectCurrentRun prioritizes ready-for-review over in-progress, draft, reopened, and approved", () => {

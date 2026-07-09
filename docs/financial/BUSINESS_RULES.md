@@ -60,6 +60,13 @@ Custom role and permission editing is deferred for MVP.
 - Rejected proposed matches should remain auditable.
 - Exceptions require review before the reconciliation run is considered complete.
 - Approved runs are locked from normal edits. Changes require reopening and an audit log entry.
+- A confirmed match can be corrected by replacing exactly one side (the bank transaction or the ledger transaction), not both.
+- Correcting a match requires a non-empty correction reason.
+- Correcting a match transitions the original match from `confirmed` to `removed`, records the correction reason and who removed it, and creates a new `confirmed` match that references the original through `correctedFromMatchId`.
+- Only confirmed matches can be corrected, and only while their reconciliation run is not `ready_for_review` or `approved`.
+- An approved reconciliation run can be reopened by a user with the `reconciliation.approve` permission. Reopening requires a non-empty reason, transitions the run from `approved` to `reopened`, and records who reopened it and when (`reopenedBy`, `reopenedAt`).
+- Reopening a run does not erase its approval history (`approvedBy`, `approvedAt`, `completedAt` are preserved).
+- A `reopened` run behaves like `draft`/`in_progress` for match edits: matches can be corrected or removed, and the run can be resubmitted for review.
 
 ## Matching Rules
 
@@ -90,8 +97,8 @@ Audit logs are required for:
 - Sign-in sensitive events where available.
 - Imports created or processed.
 - Transactions edited.
-- Matches created, confirmed, rejected, or removed.
-- Reconciliation runs completed or approved.
+- Matches created, confirmed, rejected, removed, or corrected.
+- Reconciliation runs completed, approved, or reopened.
 - Matching rules created or changed.
 - Users invited, disabled, or assigned a new role.
 - Organization settings changed.

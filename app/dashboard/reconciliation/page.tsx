@@ -1,12 +1,21 @@
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, Filter } from "lucide-react";
+import { ChevronLeft, ChevronRight, Filter, History } from "lucide-react";
 import { Prisma, ReconciliationMatchStatus, ReconciliationRunStatus, SourceType, TransactionStatus } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
 import { hasPermission, requirePermission } from "@/lib/permissions/authorize";
 import { buildReconciliationTransactionQuery, firstParam, parsePage } from "@/lib/reconciliation/transaction-query";
 import { selectCurrentRun } from "@/lib/reconciliation/run-lifecycle";
 import { Button } from "@/src/app/components/ui/button";
-import { ApproveRunButton, ManualMatchProvider, RemoveMatchButton, SelectionRadio, SubmitRunButton } from "./ManualMatchProvider";
+import { Badge } from "@/src/app/components/ui/badge";
+import {
+  ApproveRunButton,
+  CorrectMatchButton,
+  ManualMatchProvider,
+  RemoveMatchButton,
+  ReopenRunButton,
+  SelectionRadio,
+  SubmitRunButton,
+} from "./ManualMatchProvider";
 
 const pageSize = 15;
 
@@ -29,6 +38,16 @@ function formatDate(date: Date) {
     month: "short",
     day: "numeric",
     year: "numeric",
+  }).format(date);
+}
+
+function formatDateTime(date: Date) {
+  return new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
   }).format(date);
 }
 
@@ -63,18 +82,26 @@ type MatchedTransactionRow = {
   bankTransaction: { id: string; transactionDate: Date; description: string; amount: Prisma.Decimal; currency: string };
   ledgerTransaction: { id: string; transactionDate: Date; description: string; amount: Prisma.Decimal; currency: string };
   reconciliationRun: { status: ReconciliationRunStatus };
+  correctedFromMatchId: string | null;
+  correctedFromMatch: { id: string; correctionReason: string | null } | null;
 };
+
+type CorrectionCandidate = { id: string; label: string };
 
 function MatchedTransactionsTable({
   matches,
   totalMatches,
   page,
   currentParams,
+  bankCandidates,
+  ledgerCandidates,
 }: {
   matches: MatchedTransactionRow[];
   totalMatches: number;
   page: number;
   currentParams: URLSearchParams;
+  bankCandidates: CorrectionCandidate[];
+  ledgerCandidates: CorrectionCandidate[];
 }) {
   const totalPages = Math.max(1, Math.ceil(totalMatches / pageSize));
   const firstResult = totalMatches === 0 ? 0 : (page - 1) * pageSize + 1;
@@ -109,6 +136,20 @@ function MatchedTransactionsTable({
                     <p className="text-xs text-slate-500">
                       {formatDate(match.bankTransaction.transactionDate)} · {formatAmount(match.bankTransaction.amount, match.bankTransaction.currency)}
                     </p>
+                    {match.correctedFromMatchId ? (
+                      <div className="mt-2 flex flex-col gap-1">
+                        <Badge variant="secondary" className="gap-1">
+                          <History size={12} aria-hidden="true" />
+                          Corrected
+                        </Badge>
+                        <p className="text-xs text-slate-400">
+                          Corrected from match {match.correctedFromMatch?.id ?? match.correctedFromMatchId}
+                        </p>
+                        {match.correctedFromMatch?.correctionReason ? (
+                          <p className="text-xs text-slate-400">Reason: {match.correctedFromMatch.correctionReason}</p>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </td>
                   <td className="max-w-[320px] px-4 py-3">
                     <p className="truncate font-medium text-slate-950">{match.ledgerTransaction.description}</p>
@@ -118,10 +159,20 @@ function MatchedTransactionsTable({
                     </p>
                   </td>
                   <td className="px-4 py-3">
-                    <RemoveMatchButton
-                      reconciliationMatchId={match.id}
-                      locked={lockedMatchRunStatuses.includes(match.reconciliationRun.status)}
-                    />
+                    <div className="flex flex-col items-end gap-2">
+                      <CorrectMatchButton
+                        reconciliationMatchId={match.id}
+                        locked={lockedMatchRunStatuses.includes(match.reconciliationRun.status)}
+                        currentBankLabel={`${formatDate(match.bankTransaction.transactionDate)} · ${match.bankTransaction.description}`}
+                        currentLedgerLabel={`${formatDate(match.ledgerTransaction.transactionDate)} · ${match.ledgerTransaction.description}`}
+                        bankCandidates={bankCandidates}
+                        ledgerCandidates={ledgerCandidates}
+                      />
+                      <RemoveMatchButton
+                        reconciliationMatchId={match.id}
+                        locked={lockedMatchRunStatuses.includes(match.reconciliationRun.status)}
+                      />
+                    </div>
                   </td>
                 </tr>
               ))
@@ -305,7 +356,18 @@ export default async function ReconciliationPage({ searchParams }: Reconciliatio
     currency: true,
   } satisfies Prisma.TransactionSelect;
 
-  const [bankTransactions, totalBankTransactions, ledgerTransactions, totalLedgerTransactions, confirmedMatches, totalConfirmedMatches] = await Promise.all([
+  const correctionCandidateLimit = 100;
+
+  const [
+    bankTransactions,
+    totalBankTransactions,
+    ledgerTransactions,
+    totalLedgerTransactions,
+    confirmedMatches,
+    totalConfirmedMatches,
+    unmatchedBankCandidates,
+    unmatchedLedgerCandidates,
+  ] = await Promise.all([
     shouldShowBank
       ? prisma.transaction.findMany({
           where: bankWhere,
@@ -336,10 +398,33 @@ export default async function ReconciliationPage({ searchParams }: Reconciliatio
         bankTransaction: { select: transactionSummarySelect },
         ledgerTransaction: { select: transactionSummarySelect },
         reconciliationRun: { select: { status: true } },
+        correctedFromMatchId: true,
+        correctedFromMatch: { select: { id: true, correctionReason: true } },
       },
     }),
     prisma.reconciliationMatch.count({ where: { organizationId, status: ReconciliationMatchStatus.CONFIRMED } }),
+    prisma.transaction.findMany({
+      where: { organizationId, sourceType: SourceType.BANK, status: TransactionStatus.UNMATCHED },
+      orderBy: [{ transactionDate: "desc" }, { id: "desc" }],
+      take: correctionCandidateLimit,
+      select: transactionSummarySelect,
+    }),
+    prisma.transaction.findMany({
+      where: { organizationId, sourceType: SourceType.LEDGER, status: TransactionStatus.UNMATCHED },
+      orderBy: [{ transactionDate: "desc" }, { id: "desc" }],
+      take: correctionCandidateLimit,
+      select: transactionSummarySelect,
+    }),
   ]);
+
+  const bankCorrectionCandidates = unmatchedBankCandidates.map((transaction) => ({
+    id: transaction.id,
+    label: `${formatDate(transaction.transactionDate)} · ${transaction.description} · ${formatAmount(transaction.amount, transaction.currency)}`,
+  }));
+  const ledgerCorrectionCandidates = unmatchedLedgerCandidates.map((transaction) => ({
+    id: transaction.id,
+    label: `${formatDate(transaction.transactionDate)} · ${transaction.description} · ${formatAmount(transaction.amount, transaction.currency)}`,
+  }));
 
   const candidateRuns = await prisma.reconciliationRun.findMany({
     where: {
@@ -355,7 +440,17 @@ export default async function ReconciliationPage({ searchParams }: Reconciliatio
       },
     },
     orderBy: { createdAt: "desc" },
-    select: { id: true, name: true, status: true, createdAt: true, approvedAt: true },
+    select: {
+      id: true,
+      name: true,
+      status: true,
+      createdAt: true,
+      approvedBy: true,
+      approvedAt: true,
+      completedAt: true,
+      reopenedBy: true,
+      reopenedAt: true,
+    },
   });
   const currentRun = selectCurrentRun(candidateRuns);
   const currentRunConfirmedMatchCount = currentRun
@@ -394,6 +489,12 @@ export default async function ReconciliationPage({ searchParams }: Reconciliatio
                 {currentRun.status === ReconciliationRunStatus.APPROVED && currentRun.approvedAt ? (
                   <p className="text-xs text-slate-400">Approved {formatDate(currentRun.approvedAt)}</p>
                 ) : null}
+                {currentRun.status === ReconciliationRunStatus.REOPENED && currentRun.reopenedAt ? (
+                  <>
+                    <p className="text-xs text-slate-400">Reopened by {currentRun.reopenedBy ?? "unknown"}</p>
+                    <p className="text-xs text-slate-400">Reopened at {formatDateTime(currentRun.reopenedAt)}</p>
+                  </>
+                ) : null}
               </>
             ) : (
               <p className="text-sm text-slate-500">No reconciliation run yet. Create a manual match to start one.</p>
@@ -409,6 +510,10 @@ export default async function ReconciliationPage({ searchParams }: Reconciliatio
 
           {currentRun && currentRun.status === ReconciliationRunStatus.READY_FOR_REVIEW && canApprove ? (
             <ApproveRunButton reconciliationRunId={currentRun.id} />
+          ) : null}
+
+          {currentRun && currentRun.status === ReconciliationRunStatus.APPROVED && canApprove ? (
+            <ReopenRunButton reconciliationRunId={currentRun.id} />
           ) : null}
         </div>
       </section>
@@ -495,6 +600,8 @@ export default async function ReconciliationPage({ searchParams }: Reconciliatio
         totalMatches={totalConfirmedMatches}
         page={matchPage}
         currentParams={currentParams}
+        bankCandidates={bankCorrectionCandidates}
+        ledgerCandidates={ledgerCorrectionCandidates}
       />
     </div>
   );

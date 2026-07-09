@@ -31,6 +31,11 @@ export type ApproveRunInput = {
   reconciliationRunId: string;
 };
 
+export type ReopenRunInput = {
+  reconciliationRunId: string;
+  reason: string;
+};
+
 type RunRecord = Pick<ReconciliationRun, "id" | "organizationId" | "status">;
 
 type UpdateManyResult = { count: number };
@@ -59,6 +64,11 @@ export type SubmitRunResult = {
 };
 
 export type ApproveRunResult = {
+  reconciliationRunId: string;
+  status: ReconciliationRunStatus;
+};
+
+export type ReopenRunResult = {
   reconciliationRunId: string;
   status: ReconciliationRunStatus;
 };
@@ -133,6 +143,20 @@ function assertSubmittable(run: RunRecord) {
 function assertApprovable(run: RunRecord) {
   if (run.status !== ReconciliationRunStatus.READY_FOR_REVIEW) {
     throw new RunLifecycleError("Only runs that are ready for review can be approved.", "CONFLICT");
+  }
+}
+
+function validateReopenInput(input: ReopenRunInput) {
+  validateRunId(input.reconciliationRunId);
+
+  if (!input.reason || input.reason.trim().length === 0) {
+    throw new RunLifecycleError("A reopen reason is required.", "VALIDATION");
+  }
+}
+
+function assertReopenable(run: RunRecord) {
+  if (run.status !== ReconciliationRunStatus.APPROVED) {
+    throw new RunLifecycleError("Only approved runs can be reopened.", "CONFLICT");
   }
 }
 
@@ -266,6 +290,71 @@ export async function approveReconciliationRun(
     return {
       reconciliationRunId: run.id,
       status: ReconciliationRunStatus.APPROVED,
+    };
+  });
+}
+
+export async function reopenReconciliationRun(
+  input: ReopenRunInput,
+  context: LifecycleContext,
+  database: RunLifecycleDatabase = prisma as RunLifecycleDatabase,
+): Promise<ReopenRunResult> {
+  validateReopenInput(input);
+
+  return database.$transaction(async (tx) => {
+    const run = await tx.reconciliationRun.findUnique({
+      where: { id: input.reconciliationRunId },
+      select: { id: true, organizationId: true, status: true },
+    });
+
+    assertRunAccess(run, input.reconciliationRunId, context.organizationId);
+    assertReopenable(run);
+
+    const reopenedAt = new Date();
+    // CAS keyed on APPROVED: guards against two concurrent reopens (or a
+    // reopen racing another approval) both succeeding for the same run.
+    // approvedBy/approvedAt/completedAt are intentionally left out of `data`
+    // so they are preserved as history of the original approval.
+    const reopenResult = await tx.reconciliationRun.updateMany({
+      where: {
+        id: run.id,
+        organizationId: context.organizationId,
+        status: ReconciliationRunStatus.APPROVED,
+      },
+      data: {
+        status: ReconciliationRunStatus.REOPENED,
+        reopenedBy: context.userId,
+        reopenedAt,
+      },
+    });
+
+    if (reopenResult.count === 0) {
+      throw new RunLifecycleError(
+        "Reconciliation run was already reopened or is no longer approved.",
+        "CONFLICT",
+      );
+    }
+
+    await tx.auditLog.create({
+      data: {
+        organizationId: context.organizationId,
+        actorUserId: context.userId,
+        action: "RECONCILIATION_RUN_REOPENED",
+        resourceType: "reconciliationRun",
+        resourceId: run.id,
+        metadata: {
+          organizationId: context.organizationId,
+          userId: context.userId,
+          reconciliationRunId: run.id,
+          reason: input.reason,
+          timestamp: reopenedAt.toISOString(),
+        } satisfies Prisma.JsonObject,
+      },
+    });
+
+    return {
+      reconciliationRunId: run.id,
+      status: ReconciliationRunStatus.REOPENED,
     };
   });
 }

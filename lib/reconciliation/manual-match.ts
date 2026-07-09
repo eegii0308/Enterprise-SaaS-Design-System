@@ -60,6 +60,7 @@ type ManualMatchTransactionClient = {
     findUnique(args: unknown): Promise<MatchRecord | null>;
     create(args: unknown): Promise<Pick<ReconciliationMatch, "id">>;
     update(args: unknown): Promise<unknown>;
+    updateMany(args: unknown): Promise<UpdateManyResult>;
   };
   reconciliationRun: {
     findFirst(args: unknown): Promise<RunStatusRecord | null>;
@@ -92,9 +93,43 @@ export type RemoveMatchResult = {
   ledgerTransactionId: string;
 };
 
+export type CorrectMatchInput = {
+  reconciliationMatchId: string;
+  replacementBankTransactionId?: string;
+  replacementLedgerTransactionId?: string;
+  reason: string;
+};
+
+export type CorrectMatchResult = {
+  reconciliationMatchId: string;
+  correctedFromMatchId: string;
+  bankTransactionId: string;
+  ledgerTransactionId: string;
+};
+
 function validateRemoveInput(input: RemoveMatchInput) {
   if (!input.reconciliationMatchId) {
     throw new ManualMatchError("reconciliationMatchId is required.", "VALIDATION");
+  }
+}
+
+function validateCorrectInput(input: CorrectMatchInput) {
+  if (!input.reconciliationMatchId) {
+    throw new ManualMatchError("reconciliationMatchId is required.", "VALIDATION");
+  }
+
+  if (!input.reason || input.reason.trim().length === 0) {
+    throw new ManualMatchError("A correction reason is required.", "VALIDATION");
+  }
+
+  const hasBankReplacement = Boolean(input.replacementBankTransactionId);
+  const hasLedgerReplacement = Boolean(input.replacementLedgerTransactionId);
+
+  if (hasBankReplacement === hasLedgerReplacement) {
+    throw new ManualMatchError(
+      "Exactly one of replacementBankTransactionId or replacementLedgerTransactionId must be provided.",
+      "VALIDATION",
+    );
   }
 }
 
@@ -115,6 +150,29 @@ function assertMatchAccess(
 function assertRemovable(match: MatchRecord) {
   if (match.status !== ReconciliationMatchStatus.CONFIRMED) {
     throw new ManualMatchError("Only confirmed matches can be removed.", "CONFLICT");
+  }
+}
+
+function assertCorrectable(match: MatchRecord) {
+  if (match.status !== ReconciliationMatchStatus.CONFIRMED) {
+    throw new ManualMatchError("Only confirmed matches can be corrected.", "CONFLICT");
+  }
+}
+
+function assertReplacementTransaction(
+  transaction: TransactionRecord | null,
+  transactionId: string,
+  organizationId: string,
+  expectedSourceType: SourceType,
+): asserts transaction is TransactionRecord {
+  assertTransactionAccess(transaction, transactionId, organizationId);
+
+  if (transaction.sourceType !== expectedSourceType) {
+    throw new ManualMatchError(`Replacement transaction must be a ${expectedSourceType} transaction.`, "VALIDATION");
+  }
+
+  if (transaction.status !== TransactionStatus.UNMATCHED) {
+    throw new ManualMatchError("Replacement transaction must be unmatched.", "CONFLICT");
   }
 }
 
@@ -431,6 +489,152 @@ export async function removeManualMatch(
       reconciliationMatchId: match.id,
       bankTransactionId: match.bankTransactionId,
       ledgerTransactionId: match.ledgerTransactionId,
+    };
+  });
+}
+
+export async function correctManualMatch(
+  input: CorrectMatchInput,
+  context: MatchContext,
+  database: ManualMatchDatabase = prisma as ManualMatchDatabase,
+): Promise<CorrectMatchResult> {
+  validateCorrectInput(input);
+
+  const replacingBank = Boolean(input.replacementBankTransactionId);
+  const replacementTransactionId = (
+    replacingBank ? input.replacementBankTransactionId : input.replacementLedgerTransactionId
+  ) as string;
+
+  return database.$transaction(async (tx) => {
+    const match = await tx.reconciliationMatch.findUnique({
+      where: { id: input.reconciliationMatchId },
+      select: {
+        id: true,
+        organizationId: true,
+        status: true,
+        bankTransactionId: true,
+        ledgerTransactionId: true,
+        reconciliationRunId: true,
+      },
+    });
+
+    assertMatchAccess(match, input.reconciliationMatchId, context.organizationId);
+    assertCorrectable(match);
+
+    const run = await tx.reconciliationRun.findUnique({
+      where: { id: match.reconciliationRunId },
+      select: { id: true, status: true },
+    });
+    assertRunNotLocked(run);
+
+    const replacementTransactions = await tx.transaction.findMany({
+      where: { id: { in: [replacementTransactionId] } },
+      select: {
+        id: true,
+        organizationId: true,
+        sourceType: true,
+        status: true,
+        transactionDate: true,
+      },
+    });
+    const replacementTransaction = transactionById(replacementTransactions, replacementTransactionId);
+    assertReplacementTransaction(
+      replacementTransaction,
+      replacementTransactionId,
+      context.organizationId,
+      replacingBank ? SourceType.BANK : SourceType.LEDGER,
+    );
+
+    const correctionAt = new Date();
+
+    // CAS: only transitions the match to REMOVED if it is still CONFIRMED at
+    // write time, mirroring the run-transition CAS pattern from Phase 6C so a
+    // concurrent correction or removal of the same match cannot both succeed.
+    const removalResult = await tx.reconciliationMatch.updateMany({
+      where: {
+        id: match.id,
+        organizationId: context.organizationId,
+        status: ReconciliationMatchStatus.CONFIRMED,
+      },
+      data: {
+        status: ReconciliationMatchStatus.REMOVED,
+        removedBy: context.userId,
+        removedAt: correctionAt,
+        correctionReason: input.reason,
+      },
+    });
+
+    if (removalResult.count === 0) {
+      throw new ManualMatchError(
+        "Reconciliation match changed before the correction could be applied. Please retry.",
+        "CONFLICT",
+      );
+    }
+
+    const replacedTransactionId = replacingBank ? match.bankTransactionId : match.ledgerTransactionId;
+    await tx.transaction.update({
+      where: { id: replacedTransactionId },
+      data: { status: TransactionStatus.UNMATCHED },
+    });
+
+    // Atomic CAS: only claims the replacement transaction if it is still
+    // UNMATCHED at write time, the same guard used for initial manual matches.
+    const claimResult = await tx.transaction.updateMany({
+      where: {
+        id: replacementTransactionId,
+        organizationId: context.organizationId,
+        status: TransactionStatus.UNMATCHED,
+      },
+      data: { status: TransactionStatus.MATCHED },
+    });
+
+    if (claimResult.count !== 1) {
+      throw new ManualMatchError("Replacement transaction was matched by another request.", "CONFLICT");
+    }
+
+    const bankTransactionId = replacingBank ? replacementTransactionId : match.bankTransactionId;
+    const ledgerTransactionId = replacingBank ? match.ledgerTransactionId : replacementTransactionId;
+
+    const newMatch = await tx.reconciliationMatch.create({
+      data: {
+        organizationId: context.organizationId,
+        reconciliationRunId: match.reconciliationRunId,
+        bankTransactionId,
+        ledgerTransactionId,
+        matchType: ReconciliationMatchType.MANUAL,
+        status: ReconciliationMatchStatus.CONFIRMED,
+        createdBy: context.userId,
+        createdAt: correctionAt,
+        correctedFromMatchId: match.id,
+      },
+      select: { id: true },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        organizationId: context.organizationId,
+        actorUserId: context.userId,
+        action: "RECONCILIATION_MATCH_CORRECTED",
+        resourceType: "reconciliationMatch",
+        resourceId: newMatch.id,
+        metadata: {
+          organizationId: context.organizationId,
+          userId: context.userId,
+          correctedFromMatchId: match.id,
+          reconciliationMatchId: newMatch.id,
+          bankTransactionId,
+          ledgerTransactionId,
+          reason: input.reason,
+          timestamp: correctionAt.toISOString(),
+        } satisfies Prisma.JsonObject,
+      },
+    });
+
+    return {
+      reconciliationMatchId: newMatch.id,
+      correctedFromMatchId: match.id,
+      bankTransactionId,
+      ledgerTransactionId,
     };
   });
 }
