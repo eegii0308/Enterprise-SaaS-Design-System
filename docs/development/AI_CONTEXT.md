@@ -41,15 +41,19 @@ Deployment:
 
 Completed:
 - UI prototype
-- Database planning
+- Database schema (organizations, users, roles, imports, transactions, reconciliation, reports, audit logs)
+- Authentication and organization-scoped authorization
+- CSV/XLSX import pipeline
+- Reconciliation workspace: unmatched bank/ledger review, manual match creation, and confirmed-match removal (unmatch), each with audit logging and automated tests
 
 Current:
-- Phase 1 development
+- Phase 4 (Manual Reconciliation) — completing the remaining reconciliation lifecycle work
 
 Next:
-- Implement database schema
-- Authentication
-- Core reconciliation flow
+- Match rejection
+- Exception marking for unresolved transactions
+- Reconciliation run lifecycle: ready-for-review and approved states, with approved-run edit locking
+- Approval permission enforcement (`reconciliation.approve`) for Finance Manager and Admin
 
 ## Rules for AI
 

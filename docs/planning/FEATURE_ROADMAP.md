@@ -46,14 +46,19 @@ The product should first become a working reconciliation SaaS, not a complete en
 
 ## Phase 4: Reconciliation
 
-- Implement reconciliation run creation.
-- Show unmatched bank and ledger transactions.
-- Support manual matching.
-- Support match confirmation/rejection.
-- Update transaction statuses after confirmed matches.
-- Add exception status and review notes.
-- Add lifecycle states: draft, in progress, ready for review, approved, reopened.
-- Add approval permissions and audit logs.
+Status: Manual match creation and confirmed-match removal (unmatch) are implemented in the reconciliation workspace, backed by automated tests. Match rejection, exception status, the full run lifecycle, and approval permissions are not yet implemented.
+
+- Implement reconciliation run creation. (done — a manual run is created automatically on the first confirmed match)
+- Show unmatched bank and ledger transactions. (done)
+- Support manual matching. (done)
+- Support match confirmation/rejection. (confirmation done; rejection not yet implemented)
+- Support match removal (unmatch) of confirmed matches, reverting both transactions to unmatched. (done)
+- Update transaction statuses after confirmed matches. (done)
+- Add exception status and review notes. (not yet implemented)
+- Add lifecycle states: draft, in progress, ready for review, approved, reopened. (draft, in progress, and reopened only; ready for review and approved are not yet reachable)
+- Add approval permissions and audit logs. (audit logs for match creation and removal done; `reconciliation.approve` permission exists but is not yet enforced by any workflow)
+
+Next planned work: match rejection, exception marking, and the ready-for-review/approved run lifecycle with approval permission enforcement.
 
 ## Phase 5: Audit And Controls
 

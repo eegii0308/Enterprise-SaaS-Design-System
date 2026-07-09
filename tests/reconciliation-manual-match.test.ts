@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ReconciliationMatchStatus, SourceType, TransactionStatus } from "@prisma/client";
+import { ReconciliationMatchStatus, ReconciliationRunStatus, SourceType, TransactionStatus } from "@prisma/client";
 import {
   manuallyMatchTransactions,
   removeManualMatch,
@@ -24,13 +24,18 @@ type MockMatchRecord = {
   status: ReconciliationMatchStatus;
   bankTransactionId: string;
   ledgerTransactionId: string;
+  reconciliationRunId: string;
 };
+
+type MockRunRecord = { id: string; status: ReconciliationRunStatus };
 
 type MockState = {
   transactions: MockTransaction[];
   existingMatch?: { id: string } | null;
   run?: { id: string } | null;
+  pendingReviewRun?: { id: string } | null;
   matchRecord?: MockMatchRecord | null;
+  matchParentRun?: MockRunRecord | null;
   createdMatches: unknown[];
   updates: unknown[];
   matchUpdates: unknown[];
@@ -77,6 +82,7 @@ function confirmedMatch(overrides: Partial<MockMatchRecord> = {}): MockMatchReco
     status: ReconciliationMatchStatus.CONFIRMED,
     bankTransactionId: "bank-1",
     ledgerTransactionId: "ledger-1",
+    reconciliationRunId: "run-1",
     ...overrides,
   };
 }
@@ -86,7 +92,9 @@ function createDatabase(state: Partial<MockState> = {}): ManualMatchDatabase & {
     transactions: [bank(), ledger()],
     existingMatch: null,
     run: { id: "run-1" },
+    pendingReviewRun: null,
     matchRecord: confirmedMatch(),
+    matchParentRun: { id: "run-1", status: ReconciliationRunStatus.IN_PROGRESS },
     createdMatches: [],
     updates: [],
     matchUpdates: [],
@@ -125,8 +133,15 @@ function createDatabase(state: Partial<MockState> = {}): ManualMatchDatabase & {
           },
         },
         reconciliationRun: {
-          async findFirst() {
+          async findFirst(args) {
+            const where = (args as { where: { status: unknown } }).where;
+            if (where.status === ReconciliationRunStatus.READY_FOR_REVIEW) {
+              return fullState.pendingReviewRun ?? null;
+            }
             return fullState.run ?? null;
+          },
+          async findUnique() {
+            return fullState.matchParentRun ?? null;
           },
           async create(args) {
             fullState.createdRuns.push(args);
@@ -271,6 +286,16 @@ test("manuallyMatchTransactions creates a manual run when no open run exists", a
   assert.equal(db.state.createdMatches.length, 1);
 });
 
+test("manuallyMatchTransactions rejects new matches while a run is awaiting approval", async () => {
+  const db = createDatabase({ pendingReviewRun: { id: "run-pending" } });
+
+  await assert.rejects(
+    manuallyMatchTransactions(baseInput, context, db),
+    (error) => error instanceof ManualMatchError && error.code === "CONFLICT",
+  );
+  assert.equal(db.state.createdMatches.length, 0);
+});
+
 const removeInput: RemoveMatchInput = { reconciliationMatchId: "match-1" };
 
 test("removeManualMatch transitions a confirmed match to removed and reverts both transactions", async () => {
@@ -355,6 +380,28 @@ test("removeManualMatch rejects a match from another organization", async () => 
 
 test("removeManualMatch rejects a match that is not confirmed", async () => {
   const db = createDatabase({ matchRecord: confirmedMatch({ status: ReconciliationMatchStatus.REMOVED }) });
+
+  await assert.rejects(
+    removeManualMatch(removeInput, context, db),
+    (error) => error instanceof ManualMatchError && error.code === "CONFLICT",
+  );
+  assert.equal(db.state.matchUpdates.length, 0);
+  assert.equal(db.state.updates.length, 0);
+});
+
+test("removeManualMatch rejects removal when the parent run is ready for review", async () => {
+  const db = createDatabase({ matchParentRun: { id: "run-1", status: ReconciliationRunStatus.READY_FOR_REVIEW } });
+
+  await assert.rejects(
+    removeManualMatch(removeInput, context, db),
+    (error) => error instanceof ManualMatchError && error.code === "CONFLICT",
+  );
+  assert.equal(db.state.matchUpdates.length, 0);
+  assert.equal(db.state.updates.length, 0);
+});
+
+test("removeManualMatch rejects removal when the parent run is approved", async () => {
+  const db = createDatabase({ matchParentRun: { id: "run-1", status: ReconciliationRunStatus.APPROVED } });
 
   await assert.rejects(
     removeManualMatch(removeInput, context, db),

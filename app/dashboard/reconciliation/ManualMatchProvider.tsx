@@ -3,8 +3,13 @@
 import { createContext, useContext, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { SourceType } from "@prisma/client";
-import { AlertTriangle, CheckCircle2, Link2, Loader2, Unlink } from "lucide-react";
-import { manuallyMatchTransactionsAction, removeManualMatchAction } from "./actions";
+import { AlertTriangle, CheckCircle2, Link2, Loader2, Send, ShieldCheck, Unlink } from "lucide-react";
+import {
+  manuallyMatchTransactionsAction,
+  removeManualMatchAction,
+  submitReconciliationRunForReviewAction,
+  approveReconciliationRunAction,
+} from "./actions";
 import { Button } from "@/src/app/components/ui/button";
 
 type SelectionState = {
@@ -29,7 +34,7 @@ function useManualMatchContext() {
 
 type SubmitResult = { status: "idle" } | { status: "success"; message: string } | { status: "error"; message: string };
 
-export function ManualMatchProvider({ children }: { children: ReactNode }) {
+export function ManualMatchProvider({ children, locked = false }: { children: ReactNode; locked?: boolean }) {
   const router = useRouter();
   const [selection, setSelection] = useState<SelectionState>({ bankTransactionId: null, ledgerTransactionId: null });
   const [result, setResult] = useState<SubmitResult>({ status: "idle" });
@@ -44,7 +49,7 @@ export function ManualMatchProvider({ children }: { children: ReactNode }) {
     );
   }
 
-  const canMatch = Boolean(selection.bankTransactionId && selection.ledgerTransactionId) && !isPending;
+  const canMatch = Boolean(selection.bankTransactionId && selection.ledgerTransactionId) && !isPending && !locked;
 
   function handleMatch() {
     if (!selection.bankTransactionId || !selection.ledgerTransactionId) {
@@ -76,7 +81,11 @@ export function ManualMatchProvider({ children }: { children: ReactNode }) {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-sm font-bold text-slate-950">Manual match</h2>
-              <p className="text-sm text-slate-500">Select one bank transaction and one ledger transaction, then confirm the match.</p>
+              <p className="text-sm text-slate-500">
+                {locked
+                  ? "New matches are paused while the reconciliation run is awaiting approval."
+                  : "Select one bank transaction and one ledger transaction, then confirm the match."}
+              </p>
             </div>
             <Button type="button" onClick={handleMatch} disabled={!canMatch} className="gap-2">
               {isPending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Link2 size={16} aria-hidden="true" />}
@@ -106,7 +115,7 @@ export function ManualMatchProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function RemoveMatchButton({ reconciliationMatchId }: { reconciliationMatchId: string }) {
+export function RemoveMatchButton({ reconciliationMatchId, locked = false }: { reconciliationMatchId: string; locked?: boolean }) {
   const router = useRouter();
   const [result, setResult] = useState<SubmitResult>({ status: "idle" });
   const [isPending, startTransition] = useTransition();
@@ -125,9 +134,65 @@ export function RemoveMatchButton({ reconciliationMatchId }: { reconciliationMat
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <Button type="button" variant="outline" onClick={handleRemove} disabled={isPending} className="gap-2">
+      <Button type="button" variant="outline" onClick={handleRemove} disabled={isPending || locked} className="gap-2">
         {isPending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Unlink size={16} aria-hidden="true" />}
         Unmatch
+      </Button>
+      {result.status === "error" ? <p className="text-xs text-red-700">{result.message}</p> : null}
+    </div>
+  );
+}
+
+export function SubmitRunButton({ reconciliationRunId, disabled = false }: { reconciliationRunId: string; disabled?: boolean }) {
+  const router = useRouter();
+  const [result, setResult] = useState<SubmitResult>({ status: "idle" });
+  const [isPending, startTransition] = useTransition();
+
+  function handleSubmit() {
+    startTransition(async () => {
+      const response = await submitReconciliationRunForReviewAction({ reconciliationRunId });
+
+      if (response.ok) {
+        router.refresh();
+      } else {
+        setResult({ status: "error", message: response.message });
+      }
+    });
+  }
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <Button type="button" onClick={handleSubmit} disabled={isPending || disabled} className="gap-2">
+        {isPending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Send size={16} aria-hidden="true" />}
+        Submit for review
+      </Button>
+      {result.status === "error" ? <p className="text-xs text-red-700">{result.message}</p> : null}
+    </div>
+  );
+}
+
+export function ApproveRunButton({ reconciliationRunId }: { reconciliationRunId: string }) {
+  const router = useRouter();
+  const [result, setResult] = useState<SubmitResult>({ status: "idle" });
+  const [isPending, startTransition] = useTransition();
+
+  function handleApprove() {
+    startTransition(async () => {
+      const response = await approveReconciliationRunAction({ reconciliationRunId });
+
+      if (response.ok) {
+        router.refresh();
+      } else {
+        setResult({ status: "error", message: response.message });
+      }
+    });
+  }
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <Button type="button" onClick={handleApprove} disabled={isPending} className="gap-2">
+        {isPending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <ShieldCheck size={16} aria-hidden="true" />}
+        Approve run
       </Button>
       {result.status === "error" ? <p className="text-xs text-red-700">{result.message}</p> : null}
     </div>

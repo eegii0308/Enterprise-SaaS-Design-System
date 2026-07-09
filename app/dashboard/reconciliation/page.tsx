@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { ChevronLeft, ChevronRight, Filter } from "lucide-react";
-import { Prisma, ReconciliationMatchStatus, SourceType, TransactionStatus } from "@prisma/client";
+import { Prisma, ReconciliationMatchStatus, ReconciliationRunStatus, SourceType, TransactionStatus } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
-import { requirePermission } from "@/lib/permissions/authorize";
+import { hasPermission, requirePermission } from "@/lib/permissions/authorize";
 import { buildReconciliationTransactionQuery, firstParam, parsePage } from "@/lib/reconciliation/transaction-query";
+import { selectCurrentRun } from "@/lib/reconciliation/run-lifecycle";
 import { Button } from "@/src/app/components/ui/button";
-import { ManualMatchProvider, RemoveMatchButton, SelectionRadio } from "./ManualMatchProvider";
+import { ApproveRunButton, ManualMatchProvider, RemoveMatchButton, SelectionRadio, SubmitRunButton } from "./ManualMatchProvider";
 
 const pageSize = 15;
 
@@ -55,10 +56,13 @@ function buildMatchPageHref(params: URLSearchParams, page: number) {
   return `/dashboard/reconciliation?${nextParams.toString()}`;
 }
 
+const lockedMatchRunStatuses: ReconciliationRunStatus[] = [ReconciliationRunStatus.READY_FOR_REVIEW, ReconciliationRunStatus.APPROVED];
+
 type MatchedTransactionRow = {
   id: string;
   bankTransaction: { id: string; transactionDate: Date; description: string; amount: Prisma.Decimal; currency: string };
   ledgerTransaction: { id: string; transactionDate: Date; description: string; amount: Prisma.Decimal; currency: string };
+  reconciliationRun: { status: ReconciliationRunStatus };
 };
 
 function MatchedTransactionsTable({
@@ -114,7 +118,10 @@ function MatchedTransactionsTable({
                     </p>
                   </td>
                   <td className="px-4 py-3">
-                    <RemoveMatchButton reconciliationMatchId={match.id} />
+                    <RemoveMatchButton
+                      reconciliationMatchId={match.id}
+                      locked={lockedMatchRunStatuses.includes(match.reconciliationRun.status)}
+                    />
                   </td>
                 </tr>
               ))
@@ -264,6 +271,7 @@ function TransactionTable({
 
 export default async function ReconciliationPage({ searchParams }: ReconciliationPageProps) {
   const session = await requirePermission("reconciliation.run");
+  const canApprove = await hasPermission("reconciliation.approve");
   const resolvedSearchParams = (await searchParams) ?? {};
   const organizationId = session.organizationId;
   const {
@@ -327,10 +335,35 @@ export default async function ReconciliationPage({ searchParams }: Reconciliatio
         id: true,
         bankTransaction: { select: transactionSummarySelect },
         ledgerTransaction: { select: transactionSummarySelect },
+        reconciliationRun: { select: { status: true } },
       },
     }),
     prisma.reconciliationMatch.count({ where: { organizationId, status: ReconciliationMatchStatus.CONFIRMED } }),
   ]);
+
+  const candidateRuns = await prisma.reconciliationRun.findMany({
+    where: {
+      organizationId,
+      status: {
+        in: [
+          ReconciliationRunStatus.DRAFT,
+          ReconciliationRunStatus.IN_PROGRESS,
+          ReconciliationRunStatus.READY_FOR_REVIEW,
+          ReconciliationRunStatus.REOPENED,
+          ReconciliationRunStatus.APPROVED,
+        ],
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, name: true, status: true, createdAt: true, approvedAt: true },
+  });
+  const currentRun = selectCurrentRun(candidateRuns);
+  const currentRunConfirmedMatchCount = currentRun
+    ? await prisma.reconciliationMatch.count({
+        where: { organizationId, reconciliationRunId: currentRun.id, status: ReconciliationMatchStatus.CONFIRMED },
+      })
+    : 0;
+  const isRunLockedForMatching = currentRun?.status === ReconciliationRunStatus.READY_FOR_REVIEW;
 
   const currentParams = new URLSearchParams();
   for (const [key, value] of Object.entries(resolvedSearchParams)) {
@@ -348,6 +381,37 @@ export default async function ReconciliationPage({ searchParams }: Reconciliatio
           Review bank and ledger transactions for {session.organizationName}. Automatic matching is not active in this phase.
         </p>
       </div>
+
+      <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-sm font-bold text-slate-950">Reconciliation run</h2>
+            {currentRun ? (
+              <>
+                <p className="text-sm text-slate-500">
+                  {currentRun.name} · {formatStatus(currentRun.status)}
+                </p>
+                {currentRun.status === ReconciliationRunStatus.APPROVED && currentRun.approvedAt ? (
+                  <p className="text-xs text-slate-400">Approved {formatDate(currentRun.approvedAt)}</p>
+                ) : null}
+              </>
+            ) : (
+              <p className="text-sm text-slate-500">No reconciliation run yet. Create a manual match to start one.</p>
+            )}
+          </div>
+
+          {currentRun &&
+          (currentRun.status === ReconciliationRunStatus.DRAFT ||
+            currentRun.status === ReconciliationRunStatus.IN_PROGRESS ||
+            currentRun.status === ReconciliationRunStatus.REOPENED) ? (
+            <SubmitRunButton reconciliationRunId={currentRun.id} disabled={currentRunConfirmedMatchCount === 0} />
+          ) : null}
+
+          {currentRun && currentRun.status === ReconciliationRunStatus.READY_FOR_REVIEW && canApprove ? (
+            <ApproveRunButton reconciliationRunId={currentRun.id} />
+          ) : null}
+        </div>
+      </section>
 
       <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
         <form className="grid gap-4 border-b border-slate-100 p-4 md:grid-cols-2 xl:grid-cols-[repeat(5,minmax(140px,1fr))_auto] xl:items-end">
@@ -402,7 +466,7 @@ export default async function ReconciliationPage({ searchParams }: Reconciliatio
         </form>
       </section>
 
-      <ManualMatchProvider>
+      <ManualMatchProvider locked={isRunLockedForMatching}>
         {shouldShowBank ? (
           <TransactionTable
             title="Bank transactions"

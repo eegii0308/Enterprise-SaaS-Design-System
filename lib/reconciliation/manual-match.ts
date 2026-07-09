@@ -41,7 +41,11 @@ type TransactionRecord = Pick<
 
 type ExistingMatchRecord = Pick<ReconciliationMatch, "id">;
 type RunRecord = Pick<ReconciliationRun, "id">;
-type MatchRecord = Pick<ReconciliationMatch, "id" | "organizationId" | "status" | "bankTransactionId" | "ledgerTransactionId">;
+type RunStatusRecord = Pick<ReconciliationRun, "id" | "status">;
+type MatchRecord = Pick<
+  ReconciliationMatch,
+  "id" | "organizationId" | "status" | "bankTransactionId" | "ledgerTransactionId" | "reconciliationRunId"
+>;
 
 type ManualMatchTransactionClient = {
   transaction: {
@@ -56,6 +60,7 @@ type ManualMatchTransactionClient = {
   };
   reconciliationRun: {
     findFirst(args: unknown): Promise<RunRecord | null>;
+    findUnique(args: unknown): Promise<RunStatusRecord | null>;
     create(args: unknown): Promise<RunRecord>;
   };
   auditLog: {
@@ -149,6 +154,35 @@ function assertUnmatched(bankTransaction: TransactionRecord, ledgerTransaction: 
   }
 }
 
+const lockedRunStatuses: ReconciliationRunStatus[] = [ReconciliationRunStatus.READY_FOR_REVIEW, ReconciliationRunStatus.APPROVED];
+
+async function assertNoRunPendingReview(tx: ManualMatchTransactionClient, context: MatchContext) {
+  const pendingRun = await tx.reconciliationRun.findFirst({
+    where: {
+      organizationId: context.organizationId,
+      name: manualRunName,
+      status: ReconciliationRunStatus.READY_FOR_REVIEW,
+    },
+    select: { id: true },
+  });
+
+  if (pendingRun) {
+    throw new ManualMatchError(
+      "A reconciliation run is awaiting approval. New matches cannot be created until it is approved.",
+      "CONFLICT",
+    );
+  }
+}
+
+function assertRunNotLocked(run: RunStatusRecord | null) {
+  if (run && lockedRunStatuses.includes(run.status)) {
+    throw new ManualMatchError(
+      "Matches cannot be changed once their reconciliation run is submitted for review or approved.",
+      "CONFLICT",
+    );
+  }
+}
+
 async function findOrCreateManualRun(
   tx: ManualMatchTransactionClient,
   context: MatchContext,
@@ -236,6 +270,8 @@ export async function manuallyMatchTransactions(
       throw new ManualMatchError("One or both transactions are already matched.", "CONFLICT");
     }
 
+    await assertNoRunPendingReview(tx, context);
+
     const reconciliationRun = await findOrCreateManualRun(tx, context, bankTransaction, ledgerTransaction);
     const createdAt = new Date();
     const match = await tx.reconciliationMatch.create({
@@ -302,11 +338,18 @@ export async function removeManualMatch(
         status: true,
         bankTransactionId: true,
         ledgerTransactionId: true,
+        reconciliationRunId: true,
       },
     });
 
     assertMatchAccess(match, input.reconciliationMatchId, context.organizationId);
     assertRemovable(match);
+
+    const run = await tx.reconciliationRun.findUnique({
+      where: { id: match.reconciliationRunId },
+      select: { id: true, status: true },
+    });
+    assertRunNotLocked(run);
 
     const removedAt = new Date();
     await tx.reconciliationMatch.update({

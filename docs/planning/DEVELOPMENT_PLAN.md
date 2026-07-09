@@ -19,6 +19,8 @@ The current Vite React prototype is a workflow and visual reference. Production 
 
 ## Development Phases
 
+Note on phase naming: commit history and prior review notes sometimes refer to sub-increments informally (for example "Phase 5D" for an import-related migration fix, or "Phase 6A"/"Phase 6B" for reconciliation workspace and manual matching work). Those informal labels are sub-slices of the numbered phases below — "Phase 6A"/"Phase 6B" work maps to Phase 4 (Manual Reconciliation) here. This document's phase numbers are the source of truth for scope; treat informal commit-message phase labels as sequencing notes only.
+
 ### Phase 0: Foundation
 
 Purpose: create the production app structure and engineering guardrails before feature work.
@@ -152,17 +154,22 @@ Deployment milestone:
 
 Purpose: prove the core matching workflow before adding automation.
 
+Status: Manual match creation and confirmed-match removal are implemented and covered by automated tests (`lib/reconciliation/manual-match.ts`, `tests/reconciliation-manual-match.test.ts`). A manual reconciliation run is created automatically the first time a match is confirmed for an organization. Match rejection, exception marking, the ready-for-review/approved run states, and approval permission enforcement are not yet implemented.
+
+Next planned work: match rejection, exception marking for unresolved records, and the ready-for-review/approved run lifecycle with `reconciliation.approve` enforcement and approved-run edit locking — completing this phase before Phase 5 (Audit And Controls) work continues.
+
 Tasks:
 
-- Create reconciliation runs with period start and period end.
-- Implement run statuses: draft, in_progress, ready_for_review, approved, reopened.
-- Show unmatched bank and ledger candidates for a run.
-- Support manual bank-to-ledger matching.
-- Support match confirmation, rejection, and removal by status change.
-- Update related transaction statuses after confirmed matches.
-- Allow unresolved records to be marked as exceptions.
-- Lock approved runs from normal edits.
-- Add approval permissions for Finance Manager and Admin.
+- [x] Create reconciliation runs with period start and period end.
+- [ ] Implement run statuses: draft, in_progress, ready_for_review, approved, reopened. Draft, in_progress, and reopened are used by the manual-run lifecycle; ready_for_review and approved are not yet reachable.
+- [x] Show unmatched bank and ledger candidates for a run.
+- [x] Support manual bank-to-ledger matching.
+- [x] Support match confirmation and removal by status change.
+- [ ] Support match rejection by status change.
+- [x] Update related transaction statuses after confirmed matches, and revert them to unmatched when a match is removed.
+- [ ] Allow unresolved records to be marked as exceptions.
+- [ ] Lock approved runs from normal edits.
+- [ ] Add approval permissions for Finance Manager and Admin. The `reconciliation.approve` permission is defined in `types/permissions.ts` and mapped in `lib/permissions/roles.ts`, but no workflow enforces it yet.
 
 Dependencies:
 
