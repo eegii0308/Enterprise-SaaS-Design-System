@@ -41,6 +41,7 @@ type TransactionRecord = Pick<
 
 type ExistingMatchRecord = Pick<ReconciliationMatch, "id">;
 type RunRecord = Pick<ReconciliationRun, "id">;
+type MatchRecord = Pick<ReconciliationMatch, "id" | "organizationId" | "status" | "bankTransactionId" | "ledgerTransactionId">;
 
 type ManualMatchTransactionClient = {
   transaction: {
@@ -49,7 +50,9 @@ type ManualMatchTransactionClient = {
   };
   reconciliationMatch: {
     findFirst(args: unknown): Promise<ExistingMatchRecord | null>;
+    findUnique(args: unknown): Promise<MatchRecord | null>;
     create(args: unknown): Promise<Pick<ReconciliationMatch, "id">>;
+    update(args: unknown): Promise<unknown>;
   };
   reconciliationRun: {
     findFirst(args: unknown): Promise<RunRecord | null>;
@@ -69,6 +72,42 @@ export type ManualMatchResult = {
   bankTransactionId: string;
   ledgerTransactionId: string;
 };
+
+export type RemoveMatchInput = {
+  reconciliationMatchId: string;
+};
+
+export type RemoveMatchResult = {
+  reconciliationMatchId: string;
+  bankTransactionId: string;
+  ledgerTransactionId: string;
+};
+
+function validateRemoveInput(input: RemoveMatchInput) {
+  if (!input.reconciliationMatchId) {
+    throw new ManualMatchError("reconciliationMatchId is required.", "VALIDATION");
+  }
+}
+
+function assertMatchAccess(
+  match: MatchRecord | null,
+  reconciliationMatchId: string,
+  organizationId: string,
+): asserts match is MatchRecord {
+  if (!match) {
+    throw new ManualMatchError(`Reconciliation match ${reconciliationMatchId} was not found.`, "VALIDATION");
+  }
+
+  if (match.organizationId !== organizationId) {
+    throw new ManualMatchError("Reconciliation match does not belong to the current organization.", "FORBIDDEN");
+  }
+}
+
+function assertRemovable(match: MatchRecord) {
+  if (match.status !== ReconciliationMatchStatus.CONFIRMED) {
+    throw new ManualMatchError("Only confirmed matches can be removed.", "CONFLICT");
+  }
+}
 
 function validateInput(input: ManualMatchInput) {
   if (!input.bankTransactionId || !input.ledgerTransactionId) {
@@ -243,6 +282,73 @@ export async function manuallyMatchTransactions(
       reconciliationMatchId: match.id,
       bankTransactionId: input.bankTransactionId,
       ledgerTransactionId: input.ledgerTransactionId,
+    };
+  });
+}
+
+export async function removeManualMatch(
+  input: RemoveMatchInput,
+  context: MatchContext,
+  database: ManualMatchDatabase = prisma as ManualMatchDatabase,
+): Promise<RemoveMatchResult> {
+  validateRemoveInput(input);
+
+  return database.$transaction(async (tx) => {
+    const match = await tx.reconciliationMatch.findUnique({
+      where: { id: input.reconciliationMatchId },
+      select: {
+        id: true,
+        organizationId: true,
+        status: true,
+        bankTransactionId: true,
+        ledgerTransactionId: true,
+      },
+    });
+
+    assertMatchAccess(match, input.reconciliationMatchId, context.organizationId);
+    assertRemovable(match);
+
+    const removedAt = new Date();
+    await tx.reconciliationMatch.update({
+      where: { id: match.id },
+      data: {
+        status: ReconciliationMatchStatus.REMOVED,
+        removedBy: context.userId,
+        removedAt,
+      },
+    });
+
+    await tx.transaction.update({
+      where: { id: match.bankTransactionId },
+      data: { status: TransactionStatus.UNMATCHED },
+    });
+    await tx.transaction.update({
+      where: { id: match.ledgerTransactionId },
+      data: { status: TransactionStatus.UNMATCHED },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        organizationId: context.organizationId,
+        actorUserId: context.userId,
+        action: "RECONCILIATION_MATCH_REMOVED",
+        resourceType: "reconciliationMatch",
+        resourceId: match.id,
+        metadata: {
+          organizationId: context.organizationId,
+          userId: context.userId,
+          reconciliationMatchId: match.id,
+          bankTransactionId: match.bankTransactionId,
+          ledgerTransactionId: match.ledgerTransactionId,
+          timestamp: removedAt.toISOString(),
+        } satisfies Prisma.JsonObject,
+      },
+    });
+
+    return {
+      reconciliationMatchId: match.id,
+      bankTransactionId: match.bankTransactionId,
+      ledgerTransactionId: match.ledgerTransactionId,
     };
   });
 }
