@@ -22,6 +22,7 @@ type MockState = {
   confirmedMatchCount: number;
   runUpdates: unknown[];
   auditLogs: unknown[];
+  transitionCount?: number;
 };
 
 const context = {
@@ -59,6 +60,10 @@ function createDatabase(state: Partial<MockState> = {}): RunLifecycleDatabase & 
             fullState.runUpdates.push(args);
             return {};
           },
+          async updateMany(args) {
+            fullState.runUpdates.push(args);
+            return { count: fullState.transitionCount ?? 1 };
+          },
         },
         reconciliationMatch: {
           async count() {
@@ -86,8 +91,14 @@ test("submitReconciliationRunForReview transitions an in-progress run to ready f
 
   assert.deepEqual(result, { reconciliationRunId: "run-1", status: ReconciliationRunStatus.READY_FOR_REVIEW });
   assert.equal(db.state.runUpdates.length, 1);
-  const update = db.state.runUpdates[0] as { where: { id: string }; data: { status: string } };
-  assert.deepEqual(update, { where: { id: "run-1" }, data: { status: "READY_FOR_REVIEW" } });
+  const update = db.state.runUpdates[0] as {
+    where: { id: string; organizationId: string; status: { in: ReconciliationRunStatus[] } };
+    data: { status: string };
+  };
+  assert.equal(update.where.id, "run-1");
+  assert.equal(update.where.organizationId, "org-1");
+  assert.ok(update.where.status.in.includes(ReconciliationRunStatus.IN_PROGRESS));
+  assert.equal(update.data.status, "READY_FOR_REVIEW");
 
   assert.equal(db.state.auditLogs.length, 1);
   const auditLog = db.state.auditLogs[0] as {
@@ -158,6 +169,19 @@ test("submitReconciliationRunForReview rejects an already approved run", async (
   );
 });
 
+test("submitReconciliationRunForReview rejects when a concurrent submission already won the transition", async () => {
+  // Simulates two concurrent submissions both passing assertSubmittable before
+  // either commits; only one can win the status-scoped CAS update.
+  const db = createDatabase({ transitionCount: 0 });
+
+  await assert.rejects(
+    submitReconciliationRunForReview(submitInput, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "CONFLICT",
+  );
+  assert.equal(db.state.runUpdates.length, 1);
+  assert.equal(db.state.auditLogs.length, 0);
+});
+
 test("submitReconciliationRunForReview rejects a missing reconciliationRunId", async () => {
   const db = createDatabase();
 
@@ -176,10 +200,12 @@ test("approveReconciliationRun transitions a ready-for-review run to approved an
   assert.deepEqual(result, { reconciliationRunId: "run-1", status: ReconciliationRunStatus.APPROVED });
   assert.equal(db.state.runUpdates.length, 1);
   const update = db.state.runUpdates[0] as {
-    where: { id: string };
+    where: { id: string; organizationId: string; status: string };
     data: { status: string; approvedBy: string; approvedAt: Date; completedAt: Date };
   };
   assert.equal(update.where.id, "run-1");
+  assert.equal(update.where.organizationId, "org-1");
+  assert.equal(update.where.status, "READY_FOR_REVIEW");
   assert.equal(update.data.status, "APPROVED");
   assert.equal(update.data.approvedBy, "user-1");
   assert.ok(update.data.approvedAt instanceof Date);
@@ -193,6 +219,19 @@ test("approveReconciliationRun transitions a ready-for-review run to approved an
   assert.equal(auditLog.data.resourceId, "run-1");
   assert.equal(auditLog.data.metadata.reconciliationRunId, "run-1");
   assert.match(auditLog.data.metadata.timestamp, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test("approveReconciliationRun rejects when a concurrent approval already won the transition", async () => {
+  // Simulates two concurrent approvals both passing assertApprovable before
+  // either commits; only one can win the status-scoped CAS update.
+  const db = createDatabase({ run: run({ status: ReconciliationRunStatus.READY_FOR_REVIEW }), transitionCount: 0 });
+
+  await assert.rejects(
+    approveReconciliationRun(approveInput, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "CONFLICT",
+  );
+  assert.equal(db.state.runUpdates.length, 1);
+  assert.equal(db.state.auditLogs.length, 0);
 });
 
 test("approveReconciliationRun rejects a run that is not ready for review", async () => {

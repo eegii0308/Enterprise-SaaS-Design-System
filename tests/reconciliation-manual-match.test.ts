@@ -32,8 +32,8 @@ type MockRunRecord = { id: string; status: ReconciliationRunStatus };
 type MockState = {
   transactions: MockTransaction[];
   existingMatch?: { id: string } | null;
-  run?: { id: string } | null;
-  pendingReviewRun?: { id: string } | null;
+  run?: { id: string; status: ReconciliationRunStatus } | null;
+  pendingReviewRun?: { id: string; status: ReconciliationRunStatus } | null;
   matchRecord?: MockMatchRecord | null;
   matchParentRun?: MockRunRecord | null;
   createdMatches: unknown[];
@@ -41,6 +41,10 @@ type MockState = {
   matchUpdates: unknown[];
   auditLogs: unknown[];
   createdRuns: unknown[];
+  claimCount?: number;
+  runLockCount?: number;
+  transactionClaimCalls: unknown[];
+  runLockCalls: unknown[];
 };
 
 const baseInput: ManualMatchInput = {
@@ -91,7 +95,7 @@ function createDatabase(state: Partial<MockState> = {}): ManualMatchDatabase & {
   const fullState: MockState = {
     transactions: [bank(), ledger()],
     existingMatch: null,
-    run: { id: "run-1" },
+    run: { id: "run-1", status: ReconciliationRunStatus.IN_PROGRESS },
     pendingReviewRun: null,
     matchRecord: confirmedMatch(),
     matchParentRun: { id: "run-1", status: ReconciliationRunStatus.IN_PROGRESS },
@@ -100,6 +104,8 @@ function createDatabase(state: Partial<MockState> = {}): ManualMatchDatabase & {
     matchUpdates: [],
     auditLogs: [],
     createdRuns: [],
+    transactionClaimCalls: [],
+    runLockCalls: [],
     ...state,
   };
 
@@ -114,6 +120,10 @@ function createDatabase(state: Partial<MockState> = {}): ManualMatchDatabase & {
           async update(args) {
             fullState.updates.push(args);
             return {};
+          },
+          async updateMany(args) {
+            fullState.transactionClaimCalls.push(args);
+            return { count: fullState.claimCount ?? 2 };
           },
         },
         reconciliationMatch: {
@@ -147,6 +157,10 @@ function createDatabase(state: Partial<MockState> = {}): ManualMatchDatabase & {
             fullState.createdRuns.push(args);
             return { id: "run-created" };
           },
+          async updateMany(args) {
+            fullState.runLockCalls.push(args);
+            return { count: fullState.runLockCount ?? 1 };
+          },
         },
         auditLog: {
           async create(args) {
@@ -170,7 +184,15 @@ test("manuallyMatchTransactions creates match, updates both transactions, and au
     ledgerTransactionId: "ledger-1",
   });
   assert.equal(db.state.createdMatches.length, 1);
-  assert.equal(db.state.updates.length, 2);
+  assert.equal(db.state.transactionClaimCalls.length, 1);
+  const claimCall = db.state.transactionClaimCalls[0] as {
+    where: { id: { in: string[] }; organizationId: string; status: string };
+    data: { status: string };
+  };
+  assert.deepEqual([...claimCall.where.id.in].sort(), ["bank-1", "ledger-1"]);
+  assert.equal(claimCall.where.organizationId, "org-1");
+  assert.equal(claimCall.where.status, "UNMATCHED");
+  assert.equal(claimCall.data.status, "MATCHED");
   assert.equal(db.state.auditLogs.length, 1);
   const createdMatch = db.state.createdMatches[0] as {
     data: {
@@ -287,12 +309,40 @@ test("manuallyMatchTransactions creates a manual run when no open run exists", a
 });
 
 test("manuallyMatchTransactions rejects new matches while a run is awaiting approval", async () => {
-  const db = createDatabase({ pendingReviewRun: { id: "run-pending" } });
+  const db = createDatabase({ pendingReviewRun: { id: "run-pending", status: ReconciliationRunStatus.READY_FOR_REVIEW } });
 
   await assert.rejects(
     manuallyMatchTransactions(baseInput, context, db),
     (error) => error instanceof ManualMatchError && error.code === "CONFLICT",
   );
+  assert.equal(db.state.createdMatches.length, 0);
+});
+
+test("manuallyMatchTransactions rejects when a concurrent request already claimed a transaction", async () => {
+  // Simulates two concurrent manual-match requests racing for the same pair:
+  // both pass the read-time assertUnmatched/existingMatch checks, but only
+  // one can win the atomic UNMATCHED -> MATCHED claim.
+  const db = createDatabase({ claimCount: 1 });
+
+  await assert.rejects(
+    manuallyMatchTransactions(baseInput, context, db),
+    (error) => error instanceof ManualMatchError && error.code === "CONFLICT",
+  );
+  assert.equal(db.state.createdMatches.length, 0);
+  assert.equal(db.state.transactionClaimCalls.length, 1);
+});
+
+test("manuallyMatchTransactions rejects when the reused run is submitted for review mid-request", async () => {
+  // Simulates a concurrent submitReconciliationRunForReview winning the race
+  // for the same run row before this request's lock-touch CAS runs.
+  const db = createDatabase({ runLockCount: 0 });
+
+  await assert.rejects(
+    manuallyMatchTransactions(baseInput, context, db),
+    (error) => error instanceof ManualMatchError && error.code === "CONFLICT",
+  );
+  assert.equal(db.state.runLockCalls.length, 1);
+  assert.equal(db.state.transactionClaimCalls.length, 0);
   assert.equal(db.state.createdMatches.length, 0);
 });
 

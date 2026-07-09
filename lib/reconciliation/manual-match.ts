@@ -47,10 +47,13 @@ type MatchRecord = Pick<
   "id" | "organizationId" | "status" | "bankTransactionId" | "ledgerTransactionId" | "reconciliationRunId"
 >;
 
+type UpdateManyResult = { count: number };
+
 type ManualMatchTransactionClient = {
   transaction: {
     findMany(args: unknown): Promise<TransactionRecord[]>;
     update(args: unknown): Promise<unknown>;
+    updateMany(args: unknown): Promise<UpdateManyResult>;
   };
   reconciliationMatch: {
     findFirst(args: unknown): Promise<ExistingMatchRecord | null>;
@@ -59,9 +62,10 @@ type ManualMatchTransactionClient = {
     update(args: unknown): Promise<unknown>;
   };
   reconciliationRun: {
-    findFirst(args: unknown): Promise<RunRecord | null>;
+    findFirst(args: unknown): Promise<RunStatusRecord | null>;
     findUnique(args: unknown): Promise<RunStatusRecord | null>;
     create(args: unknown): Promise<RunRecord>;
+    updateMany(args: unknown): Promise<UpdateManyResult>;
   };
   auditLog: {
     create(args: unknown): Promise<unknown>;
@@ -183,6 +187,12 @@ function assertRunNotLocked(run: RunStatusRecord | null) {
   }
 }
 
+const openRunStatuses: ReconciliationRunStatus[] = [
+  ReconciliationRunStatus.DRAFT,
+  ReconciliationRunStatus.IN_PROGRESS,
+  ReconciliationRunStatus.REOPENED,
+];
+
 async function findOrCreateManualRun(
   tx: ManualMatchTransactionClient,
   context: MatchContext,
@@ -193,13 +203,32 @@ async function findOrCreateManualRun(
     where: {
       organizationId: context.organizationId,
       name: manualRunName,
-      status: { in: [ReconciliationRunStatus.DRAFT, ReconciliationRunStatus.IN_PROGRESS, ReconciliationRunStatus.REOPENED] },
+      status: { in: openRunStatuses },
     },
     orderBy: { createdAt: "desc" },
-    select: { id: true },
+    select: { id: true, status: true },
   });
 
   if (existingRun) {
+    // Status-preserving CAS: locks the run row and re-checks it is still open,
+    // so a concurrent submitReconciliationRunForReview cannot slip a match in
+    // after (or lose to) the run's transition to READY_FOR_REVIEW.
+    const lockResult = await tx.reconciliationRun.updateMany({
+      where: {
+        id: existingRun.id,
+        organizationId: context.organizationId,
+        status: existingRun.status,
+      },
+      data: { status: existingRun.status },
+    });
+
+    if (lockResult.count === 0) {
+      throw new ManualMatchError(
+        "The open reconciliation run changed before this match could be saved. Please retry.",
+        "CONFLICT",
+      );
+    }
+
     return existingRun;
   }
 
@@ -273,6 +302,24 @@ export async function manuallyMatchTransactions(
     await assertNoRunPendingReview(tx, context);
 
     const reconciliationRun = await findOrCreateManualRun(tx, context, bankTransaction, ledgerTransaction);
+
+    // Atomic CAS: only flips both transactions to MATCHED if they are still
+    // UNMATCHED at write time. This is the authoritative guard against two
+    // concurrent requests both passing the assertUnmatched/existingMatch
+    // checks above and creating duplicate confirmed matches for the same pair.
+    const claimResult = await tx.transaction.updateMany({
+      where: {
+        id: { in: [input.bankTransactionId, input.ledgerTransactionId] },
+        organizationId: context.organizationId,
+        status: TransactionStatus.UNMATCHED,
+      },
+      data: { status: TransactionStatus.MATCHED },
+    });
+
+    if (claimResult.count !== 2) {
+      throw new ManualMatchError("One or both transactions were matched by another request.", "CONFLICT");
+    }
+
     const createdAt = new Date();
     const match = await tx.reconciliationMatch.create({
       data: {
@@ -288,14 +335,6 @@ export async function manuallyMatchTransactions(
       select: { id: true },
     });
 
-    await tx.transaction.update({
-      where: { id: input.bankTransactionId },
-      data: { status: TransactionStatus.MATCHED },
-    });
-    await tx.transaction.update({
-      where: { id: input.ledgerTransactionId },
-      data: { status: TransactionStatus.MATCHED },
-    });
     await tx.auditLog.create({
       data: {
         organizationId: context.organizationId,

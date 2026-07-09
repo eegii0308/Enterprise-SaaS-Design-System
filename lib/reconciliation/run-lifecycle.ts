@@ -33,10 +33,13 @@ export type ApproveRunInput = {
 
 type RunRecord = Pick<ReconciliationRun, "id" | "organizationId" | "status">;
 
+type UpdateManyResult = { count: number };
+
 type RunLifecycleTransactionClient = {
   reconciliationRun: {
     findUnique(args: unknown): Promise<RunRecord | null>;
     update(args: unknown): Promise<unknown>;
+    updateMany(args: unknown): Promise<UpdateManyResult>;
   };
   reconciliationMatch: {
     count(args: unknown): Promise<number>;
@@ -162,10 +165,24 @@ export async function submitReconciliationRunForReview(
     }
 
     const submittedAt = new Date();
-    await tx.reconciliationRun.update({
-      where: { id: run.id },
+    // CAS keyed on the previously read status: contends on the same run row
+    // as findOrCreateManualRun's lock-touch in manual-match.ts, so a
+    // concurrent submit and a concurrent manual match cannot both win.
+    const transitionResult = await tx.reconciliationRun.updateMany({
+      where: {
+        id: run.id,
+        organizationId: context.organizationId,
+        status: { in: submittableStatuses },
+      },
       data: { status: ReconciliationRunStatus.READY_FOR_REVIEW },
     });
+
+    if (transitionResult.count === 0) {
+      throw new RunLifecycleError(
+        "Reconciliation run status changed before submission completed. Please retry.",
+        "CONFLICT",
+      );
+    }
 
     await tx.auditLog.create({
       data: {
@@ -207,8 +224,14 @@ export async function approveReconciliationRun(
     assertApprovable(run);
 
     const approvedAt = new Date();
-    await tx.reconciliationRun.update({
-      where: { id: run.id },
+    // CAS keyed on READY_FOR_REVIEW: guards against two concurrent approvals
+    // (or an approval racing a reopen) both succeeding for the same run.
+    const approvalResult = await tx.reconciliationRun.updateMany({
+      where: {
+        id: run.id,
+        organizationId: context.organizationId,
+        status: ReconciliationRunStatus.READY_FOR_REVIEW,
+      },
       data: {
         status: ReconciliationRunStatus.APPROVED,
         approvedBy: context.userId,
@@ -216,6 +239,13 @@ export async function approveReconciliationRun(
         completedAt: approvedAt,
       },
     });
+
+    if (approvalResult.count === 0) {
+      throw new RunLifecycleError(
+        "Reconciliation run was already approved or is no longer ready for review.",
+        "CONFLICT",
+      );
+    }
 
     await tx.auditLog.create({
       data: {
