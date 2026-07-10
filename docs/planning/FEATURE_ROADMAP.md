@@ -26,12 +26,13 @@ The product should first become a working reconciliation SaaS, not a complete en
 
 ## Phase 2: Dashboard And Transactions
 
-- Implement dashboard summary endpoint.
-- Implement transaction list with pagination, search, and status filter.
-- Implement transaction detail view.
-- Add transaction review notes.
+- Implement dashboard summary endpoint. (done)
+- Implement transaction list with pagination, search, and status filter. (done — `/dashboard/transactions`)
+- Implement transaction detail view. (done — `/dashboard/transactions/[transactionId]`, Phase 8B)
+- Add an auditable transaction correction workflow, preserving prior values as history. (done — Phase 8B, `lib/transactions/adjustment.ts`; not part of the original scope but a natural extension of the detail view)
+- Add transaction review notes. (not yet implemented — the `TransactionReviewNote` model exists but has no service or UI)
 - Add loading, error, and empty states.
-- Replace hardcoded mock data with API-backed data.
+- Replace hardcoded mock data with API-backed data. (done)
 
 ## Phase 3: Imports
 

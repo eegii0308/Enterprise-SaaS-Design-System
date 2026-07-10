@@ -269,10 +269,12 @@ export default async function TransactionsPage({ searchParams }: TransactionsPag
             <tbody className="divide-y divide-slate-100">
               {transactions.length > 0 ? (
                 transactions.map((transaction) => (
-                  <tr key={transaction.id} className="align-top">
+                  <tr key={transaction.id} className="align-top hover:bg-slate-50">
                     <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatDate(transaction.transactionDate)}</td>
                     <td className="max-w-[320px] px-4 py-3">
-                      <p className="truncate font-medium text-slate-950">{transaction.description}</p>
+                      <Link href={`/dashboard/transactions/${transaction.id}`} className="truncate font-medium text-blue-600 hover:underline block">
+                        {transaction.description}
+                      </Link>
                       <p className="mt-1 truncate text-xs text-slate-500">{transaction.reference ? `Ref ${transaction.reference}` : "No reference"}</p>
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-right font-semibold text-slate-950">{formatAmount(transaction.amount, transaction.currency)}</td>

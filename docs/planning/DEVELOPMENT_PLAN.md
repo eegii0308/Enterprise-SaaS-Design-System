@@ -19,7 +19,7 @@ The current Vite React prototype is a workflow and visual reference. Production 
 
 ## Development Phases
 
-Note on phase naming: commit history and prior review notes sometimes refer to sub-increments informally (for example "Phase 5D" for an import-related migration fix, "Phase 6A"/"Phase 6B"/"Phase 6C"/"Phase 6C.1"/"Phase 6D" for reconciliation workspace, manual matching, run lifecycle, match correction, run reopening, and concurrency hardening work, "Phase 7A"/"Phase 7B"/"Phase 7C"/"Phase 7D" for financial tie-out, explicit run creation, approval controls, and bank account management, and "Phase 8A" for the import results & error viewer). Those informal labels are sub-slices of the numbered phases below — "Phase 6A" through "Phase 6D" and "Phase 7A"/"7B"/"7C"/"7D" map to Phase 4 (Manual Reconciliation), and "Phase 8A" maps to Phase 2 (Import Engine) — not to the numbered "Phase 7: Matching Rules" or "Phase 8: Admin Settings Polish" later in this document. This document's phase numbers are the source of truth for scope; treat informal commit-message phase labels as sequencing notes only.
+Note on phase naming: commit history and prior review notes sometimes refer to sub-increments informally (for example "Phase 5D" for an import-related migration fix, "Phase 6A"/"Phase 6B"/"Phase 6C"/"Phase 6C.1"/"Phase 6D" for reconciliation workspace, manual matching, run lifecycle, match correction, run reopening, and concurrency hardening work, "Phase 7A"/"Phase 7B"/"Phase 7C"/"Phase 7D" for financial tie-out, explicit run creation, approval controls, and bank account management, "Phase 8A" for the import results & error viewer, and "Phase 8B" for the transaction detail and correction workflow). Those informal labels are sub-slices of the numbered phases below — "Phase 6A" through "Phase 6D" and "Phase 7A"/"7B"/"7C"/"7D" map to Phase 4 (Manual Reconciliation), and "Phase 8A"/"Phase 8B" map to Phase 2 (Import Engine) and Phase 3 (Transactions And Review) respectively — not to the numbered "Phase 7: Matching Rules" or "Phase 8: Admin Settings Polish" later in this document. This document's phase numbers are the source of truth for scope; treat informal commit-message phase labels as sequencing notes only.
 
 ### Phase 0: Foundation
 
@@ -127,15 +127,19 @@ Deployment milestone:
 
 Purpose: let finance users inspect and prepare imported records.
 
+Status: Paginated transaction list, exception marking/clearing, and dashboard summary counts were implemented earlier (Phase 6-series reconciliation work). Transaction detail view and the auditable correction workflow were implemented in Phase 8B (see below). Transaction review notes are not yet implemented — the `TransactionReviewNote` model exists in the schema but has no service layer or UI.
+
+Phase 8B (transaction detail and correction workflow): a new `/dashboard/transactions/[transactionId]` page (gated on `transactions.view`) shows full transaction detail and adjustment history. `adjustTransaction` (`lib/transactions/adjustment.ts`) lets a `transactions.edit` holder correct `description`, `vendor`, `reference`, `currency`, `amount`, or `transactionDate` with a required reason; the pre-existing but previously-unused `TransactionAdjustment` model stores the field name, old value, new value, reason, actor, and timestamp for every correction, so imported source data is never overwritten without first preserving its prior value. Amount corrections recompute `debitAmount`/`creditAmount` from the new amount's sign, matching the derivation `prepareImportRows` uses at import time. A transaction whose confirmed reconciliation match belongs to a `READY_FOR_REVIEW` or `APPROVED` run cannot be adjusted (`CONFLICT`), so a correction cannot invalidate an already-approved tie-out snapshot; the field update itself is an atomic CAS `updateMany` guarding against two concurrent corrections to the same field. Every adjustment also writes a `TRANSACTION_ADJUSTED` audit log entry. See `tests/transaction-adjustment.test.ts` and `tests/transaction-actions-permissions.test.ts`.
+
 Tasks:
 
-- Implement paginated transaction list with server-side search and filters.
-- Add transaction detail view.
-- Add transaction review notes.
-- Add exception marking.
-- Add allowed transaction adjustments while keeping imported source data immutable.
-- Add dashboard summary counts from real transaction data.
-- Add loading, empty, error, and permission-denied states.
+- [x] Implement paginated transaction list with server-side search and filters.
+- [x] Add transaction detail view (Phase 8B).
+- [ ] Add transaction review notes.
+- [x] Add exception marking.
+- [x] Add allowed transaction adjustments while keeping imported source data immutable (Phase 8B).
+- [x] Add dashboard summary counts from real transaction data.
+- [ ] Add loading, empty, error, and permission-denied states (partially — the transaction list and detail pages have empty states; dedicated loading/error boundaries are not yet added for the detail page).
 
 Dependencies:
 
