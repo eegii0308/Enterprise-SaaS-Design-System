@@ -50,6 +50,17 @@ export async function requirePermission(permission: Permission) {
   return requirePermissionWith(permission, getSession, redirectToLogin, loadAuthorizationContext);
 }
 
+export async function hasPermission(permission: Permission) {
+  const session = await getSession();
+
+  if (!session) {
+    return false;
+  }
+
+  const authorization = await loadAuthorizationContext(session);
+  return authorization?.permissions.includes(permission) ?? false;
+}
+
 export async function requireOrganizationAccess(organizationId: string) {
   return requireOrganizationAccessWith(organizationId, getSession, redirectToLogin, loadAuthorizationContext);
 }

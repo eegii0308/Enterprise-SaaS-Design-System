@@ -1,0 +1,141 @@
+warning: in the working copy of 'app/dashboard/reconciliation/actions.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'app/dashboard/reconciliation/page.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'lib/reconciliation/manual-match.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/reconciliation-manual-match.test.ts', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/app/dashboard/reconciliation/actions.ts b/app/dashboard/reconciliation/actions.ts[m
+[1mindex f355e95..e5c0cac 100644[m
+[1m--- a/app/dashboard/reconciliation/actions.ts[m
+[1m+++ b/app/dashboard/reconciliation/actions.ts[m
+[36m@@ -1,7 +1,7 @@[m
+ "use server";[m
+ [m
+ import { requirePermission } from "@/lib/permissions/authorize";[m
+[31m-import { manuallyMatchTransactions, ManualMatchError } from "@/lib/reconciliation/manual-match";[m
+[32m+[m[32mimport { manuallyMatchTransactions, removeManualMatch, ManualMatchError } from "@/lib/reconciliation/manual-match";[m
+ [m
+ type ManualMatchActionState =[m
+   | {[m
+[36m@@ -44,3 +44,30 @@[m [mexport async function manuallyMatchTransactionsAction(input: {[m
+     };[m
+   }[m
+ }[m
+[32m+[m
+[32m+[m[32mexport async function removeManualMatchAction(input: { reconciliationMatchId: string }): Promise<ManualMatchActionState> {[m
+[32m+[m[32m  const session = await requirePermission("reconciliation.run");[m
+[32m+[m
+[32m+[m[32m  try {[m
+[32m+[m[32m    const match = await removeManualMatch(input, {[m
+[32m+[m[32m      organizationId: session.organizationId,[m
+[32m+[m[32m      userId: session.userId,[m
+[32m+[m[32m    });[m
+[32m+[m
+[32m+[m[32m    return {[m
+[32m+[m[32m      ok: true,[m
+[32m+[m[32m      message: "Reconciliation match removed.",[m
+[32m+[m[32m      reconciliationMatchId: match.reconciliationMatchId,[m
+[32m+[m[32m    };[m
+[32m+[m[32m  } catch (error) {[m
+[32m+[m[32m    if (error instanceof ManualMatchError) {[m
+[32m+[m[32m      return { ok: false, message: error.message, code: error.code };[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    return {[m
+[32m+[m[32m      ok: false,[m
+[32m+[m[32m      message: "Reconciliation match could not be removed.",[m
+[32m+[m[32m      code: "SERVER",[m
+[32m+[m[32m    };[m
+[32m+[m[32m  }[m
+[32m+[m[32m}[m
+[1mdiff --git a/app/dashboard/reconciliation/page.tsx b/app/dashboard/reconciliation/page.tsx[m
+[1mindex bdf1087..a310ca3 100644[m
+[1m--- a/app/dashboard/reconciliation/page.tsx[m
+[1m+++ b/app/dashboard/reconciliation/page.tsx[m
+[36m@@ -1,10 +1,11 @@[m
+ import Link from "next/link";[m
+ import { ChevronLeft, ChevronRight, Filter } from "lucide-react";[m
+[31m-import { Prisma, SourceType, TransactionStatus } from "@prisma/client";[m
+[32m+[m[32mimport { Prisma, ReconciliationMatchStatus, SourceType, TransactionStatus } from "@prisma/client";[m
+ import { prisma } from "@/lib/db/client";[m
+ import { requirePermission } from "@/lib/permissions/authorize";[m
+[31m-import { buildReconciliationTransactionQuery, firstParam } from "@/lib/reconciliation/transaction-query";[m
+[32m+[m[32mimport { buildReconciliationTransactionQuery, firstParam, parsePage } from "@/lib/reconciliation/transaction-query";[m
+ import { Button } from "@/src/app/components/ui/button";[m
+[32m+[m[32mimport { ManualMatchProvider, RemoveMatchButton, SelectionRadio } from "./ManualMatchProvider";[m
+ [m
+ const pageSize = 15;[m
+ [m
+[36m@@ -48,6 +49,113 @@[m [mfunction buildPageHref(params: URLSearchParams, sourceType: SourceType, page: nu[m
+   return `/dashboard/reconciliation?${nextParams.toString()}`;[m
+ }[m
+ [m
+[32m+[m[32mfunction buildMatchPageHref(params: URLSearchParams, page: number) {[m
+[32m+[m[32m  const nextParams = new URLSearchParams(params);[m
+[32m+[m[32m  nextParams.set("matchPage", page.toString());[m
+[32m+[m[32m  return `/dashboard/reconciliation?${nextParams.toString()}`;[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mtype MatchedTransactionRow = {[m
+[32m+[m[32m  id: string;[m
+[32m+[m[32m  bankTransaction: { id: string; transactionDate: Date; description: string; amount: Prisma.Decimal; currency: string };[m
+[32m+[m[32m  ledgerTransaction: { id: string; transactionDate: Date; description: string; amount: Prisma.Decimal; currency: string };[m
+[32m+[m[32m};[m
+[32m+[m
+[32m+[m[32mfunction MatchedTransactionsTable({[m
+[32m+[m[32m  matches,[m
+[32m+[m[32m  totalMatches,[m
+[32m+[m[32m  page,[m
+[32m+[m[32m  currentParams,[m
+[32m+[m[32m}: {[m
+[32m+[m[32m  matches: MatchedTransactionRow[];[m
+[32m+[m[32m  totalMatches: number;[m
+[32m+[m[32m  page: number;[m
+[32m+[m[32m  currentParams: URLSearchParams;[m
+[32m+[m[32m}) {[m
+[32m+[m[32m  const totalPages = Math.max(1, Math.ceil(totalMatches / pageSize));[m
+[32m+[m[32m  const firstResult = totalMatches === 0 ? 0 : (page - 1) * pageSize + 1;[m
+[32m+[m[32m  const lastResult = Math.min(page * pageSize, totalMatches);[m
+[32m+[m
+[32m+[m[32m  return ([m
+[32m+[m[32m    <section className="rounded-lg border border-slate-200 bg-white shadow-sm">[m
+[32m+[m[32m      <div className="flex flex-col gap-1 border-b border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between">[m
+[32m+[m[32m        <div>[m
+[32m+[m[32m          <h2 className="text-base font-bold text-slate-950">Matched transactions</h2>[m
+[32m+[m[32m          <p className="text-sm text-slate-500">[m
+[32m+[m[32m            {totalMatches.toLocaleString("en")} confirmed match{totalMatches === 1 ? "" : "es"}[m
+[32m+[m[32m          </p>[m
+[32m+[m[32m        </div>[m
+[32m+[m[32m      </div>[m
+[32m+[m
+[32m+[m[32m      <div className="overflow-x-auto">[m
+[32m+[m[32m        <table className="w-full min-w-[900px] text-left text-sm">[m
+[32m+[m[32m          <thead className="border-b border-slate-100 bg-slate-50 text-xs uppercase text-slate-500">[m
+[32m+[m[32m            <tr>[m
+[32m+[m[32m              <th className="px-4 py-3 font-semibold">Bank transaction</th>[m
+[32m+[m[32m              <th className="px-4 py-3 font-semibold">Ledger transaction</th>[m
+[32m+[m[32m              <th className="px-4 py-3 font-semibold">Action</th>[m
+[32m+[m[32m            </tr>[m
+[32m+[m[32m          </thead>[m
+[32m+[m[32m          <tbody className="divide-y divide-slate-100">[m
+[32m+[m[32m            {matches.length > 0 ? ([m
+[32m+[m[32m              matches.map((match) => ([m
+[32m+[m[32m                <tr key={match.id} className="align-top">[m
+[32m+[m[32m                  <td className="max-w-[320px] px-4 py-3">[m
+[32m+[m[32m                    <p className="truncate font-medium text-slate-950">{match.bankTransaction.description}</p>[m
+[32m+[m[32m                    <p className="text-xs text-slate-500">[m
+[32m+[m[32m                      {formatDate(match.bankTransaction.transactionDate)} · {formatAmount(match.bankTransaction.amount, match.bankTransaction.currency)}[m
+[32m+[m[32m                    </p>[m
+[32m+[m[32m                  </td>[m
+[32m+[m[32m                  <td className="max-w-[320px] px-4 py-3">[m
+[32m+[m[32m                    <p className="truncate font-medium text-slate-950">{match.ledgerTransaction.description}</p>[m
+[32m+[m[32m                    <p className="text-xs text-slate-500">[m
+[32m+[m[32m                      {formatDate(match.ledgerTransaction.transactionDate)} ·{" "}[m
+[32m+[m[32m                      {formatAmount(match.ledgerTransaction.amount, match.ledgerTransaction.currency)}[m
+[32m+[m[32m                    </p>[m
+[32m+[m[32m                  </td>[m
+[32m+[m[32m                  <td className="px-4 py-3">[m
+[32m+[m[32m                    <RemoveMatchButton reconciliationMatchId={match.id} />[m
+[32m+[m[32m                  </td>[m
+[32m+[m[32m                </tr>[m
+[32m+[m[32m              ))[m
+[32m+[m[32m            ) : ([m
+[32m+[m[32m            

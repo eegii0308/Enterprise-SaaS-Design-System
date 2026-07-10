@@ -1,5 +1,200 @@
 # Database Design
 
+## Current Implementation
+
+E-Reconcile uses Prisma with PostgreSQL. The Prisma schema is located at `prisma/schema.prisma`, and migrations are stored in `prisma/migrations`.
+
+The database model is tenant-centered. Organization-owned records include `organizationId` and should be queried through the active session organization.
+
+## Prisma Models
+
+### SaaS identity models
+
+- `Organization`
+- `User`
+- `Session`
+- `Membership`
+- `Role`
+- `RolePermission`
+
+### Financial setup models
+
+- `BankAccount`
+- `MatchingRule`
+
+### Import models
+
+- `ImportBatch`
+- `ImportRow`
+
+### Transaction models
+
+- `Transaction`
+- `TransactionReviewNote`
+- `TransactionAdjustment`
+
+### Reconciliation models
+
+- `ReconciliationRun`
+- `ReconciliationMatch`
+
+### Reporting and audit models
+
+- `Report`
+- `AuditLog`
+
+## Relationships
+
+### Organization ownership
+
+`Organization` is the root tenant model. Most operational data belongs to one organization.
+
+### User membership
+
+Users are globally unique by email. Access to an organization is represented through `Membership`. Each membership references:
+
+- Organization
+- User
+- Role
+
+### Roles and permissions
+
+Roles are organization-scoped. Role permissions are stored separately and linked to `Role`.
+
+### Imports and transactions
+
+Import batches own import rows. Valid import rows can create transactions. Transactions can reference an import batch and optionally a bank account.
+
+### Reconciliation
+
+Reconciliation runs group matches. A reconciliation match links one bank transaction to one ledger transaction.
+
+### Audit logs
+
+Audit logs belong to an organization and store actor, action, resource, metadata, optional IP address, and timestamp.
+
+## Tenant Ownership
+
+Organization-owned models currently include:
+
+- `BankAccount`
+- `ImportBatch`
+- `ImportRow`
+- `Transaction`
+- `TransactionReviewNote`
+- `TransactionAdjustment`
+- `ReconciliationRun`
+- `ReconciliationMatch`
+- `MatchingRule`
+- `Report`
+- `AuditLog`
+- `Membership`
+- `Role`
+
+Every query and mutation for these models should be scoped to the active organization.
+
+## Indexes and Constraints
+
+Current important constraints include:
+
+- `User.email` unique.
+- `Membership` unique by organization and user.
+- `Role` unique by organization and name.
+- `RolePermission` unique by role and permission.
+- `ImportBatch` unique by organization and file hash.
+- `ImportRow` unique by organization, import batch, and row number.
+- `ImportRow` unique by organization and row hash.
+- `Transaction` unique by organization and external fingerprint.
+
+Current important indexes include:
+
+- Import batch by organization and creation time.
+- Import batch by organization and status.
+- Import rows by organization, import batch, and validation status.
+- Transactions by organization and status.
+- Transactions by organization, source type, status, and transaction date.
+- Transactions by organization and import batch.
+- Transactions by organization, bank account, and transaction date.
+- Reconciliation runs by organization and status.
+- Reconciliation matches by organization and run.
+- Reports by organization and report type.
+- Audit logs by organization and creation time.
+
+## Migration Strategy
+
+Current documented strategy:
+
+- Prisma migrations are the source of truth.
+- Schema changes should create committed migration files.
+- `prisma db push` should not be used for shared development.
+- Clean database migration verification is recommended before feature phases.
+
+Known limitation:
+
+- The current migration history appears inconsistent around tenant hardening constraints and should be verified against a clean PostgreSQL database.
+
+## Financial Tables
+
+Financial tables include:
+
+- `BankAccount`
+- `ImportBatch`
+- `ImportRow`
+- `Transaction`
+- `TransactionReviewNote`
+- `TransactionAdjustment`
+- `ReconciliationRun`
+- `ReconciliationMatch`
+- `MatchingRule`
+- `Report`
+- `AuditLog`
+
+These tables must be treated as high-integrity data stores.
+
+## Transaction Tables
+
+`Transaction` is the central financial record created from imports. It stores source type, date, amount fields, currency, reference, description, status, and external fingerprint.
+
+Known limitation:
+
+- Imported transaction facts are mutable at the database level.
+
+Future improvement:
+
+- Enforce correction-through-adjustment rather than direct fact mutation.
+
+## Reconciliation Tables
+
+`ReconciliationRun` models a reconciliation workflow period and status. `ReconciliationMatch` links bank and ledger transactions.
+
+Known limitation:
+
+- Active match uniqueness is currently application-enforced.
+
+Future improvement:
+
+- Add database-level safeguards to prevent duplicate active matches.
+
+## Audit Tables
+
+`AuditLog` stores audit events by organization.
+
+Known limitation:
+
+- There is no central audit service or event catalog yet.
+
+Future improvement:
+
+- Standardize action names, metadata, retention, actor handling, and request context.
+
+## Consolidation note
+
+This document is the database design source of truth. The previous flat docs/database-design.md file was consolidated here as legacy design-goal and table-field context below.
+
+## Legacy database design context
+
+# Database Design
+
 ## Design Goals
 
 The MVP database should support:

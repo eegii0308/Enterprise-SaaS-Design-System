@@ -1,3 +1,5 @@
+> Deprecated reference: this file was consolidated into ARCHITECTURE_OVERVIEW.md. Keep it only for historical context; update the source-of-truth architecture document instead.
+
 # Architecture
 
 ## Current State

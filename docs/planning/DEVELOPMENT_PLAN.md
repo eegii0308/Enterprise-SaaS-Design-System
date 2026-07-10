@@ -19,6 +19,8 @@ The current Vite React prototype is a workflow and visual reference. Production 
 
 ## Development Phases
 
+Note on phase naming: commit history and prior review notes sometimes refer to sub-increments informally (for example "Phase 5D" for an import-related migration fix, or "Phase 6A"/"Phase 6B"/"Phase 6C"/"Phase 6C.1"/"Phase 6D" for reconciliation workspace, manual matching, run lifecycle, match correction, run reopening, and concurrency hardening work). Those informal labels are sub-slices of the numbered phases below — "Phase 6A" through "Phase 6D" work maps to Phase 4 (Manual Reconciliation) here. This document's phase numbers are the source of truth for scope; treat informal commit-message phase labels as sequencing notes only.
+
 ### Phase 0: Foundation
 
 Purpose: create the production app structure and engineering guardrails before feature work.
@@ -152,17 +154,25 @@ Deployment milestone:
 
 Purpose: prove the core matching workflow before adding automation.
 
+Status: Manual match creation, confirmed-match removal, match correction, and the full reconciliation run lifecycle (submit, approve, reopen) are implemented and covered by automated tests (`lib/reconciliation/manual-match.ts`, `lib/reconciliation/run-lifecycle.ts`, `tests/reconciliation-manual-match.test.ts`, `tests/reconciliation-run-lifecycle.test.ts`, `tests/reconciliation-match-correction.test.ts`). A manual reconciliation run is created automatically the first time a match is confirmed for an organization, transitions from draft/in_progress/reopened to ready_for_review on submission, from ready_for_review to approved on approval, and from approved back to reopened on reopening. A confirmed match can be corrected by replacing one side (bank or ledger transaction) with a required reason, preserving history via `correctedFromMatchId`. Submission, approval, and reopening are enforced server-side through the `reconciliation.run` and `reconciliation.approve` permissions and each write an audit log event. Concurrency hardening — atomic transaction-status claims, compare-and-swap (CAS) run status transitions, and CAS re-verification that a match's parent run is still editable before removal or correction — all within database transactions — prevents duplicate matches and conflicting concurrent state changes, including a race where a match removal/correction could otherwise apply after a concurrent submission or approval locked the run (Phase 6D). Match rejection and exception marking are not yet implemented.
+
+Next planned work: match rejection and exception marking for unresolved records.
+
 Tasks:
 
-- Create reconciliation runs with period start and period end.
-- Implement run statuses: draft, in_progress, ready_for_review, approved, reopened.
-- Show unmatched bank and ledger candidates for a run.
-- Support manual bank-to-ledger matching.
-- Support match confirmation, rejection, and removal by status change.
-- Update related transaction statuses after confirmed matches.
-- Allow unresolved records to be marked as exceptions.
-- Lock approved runs from normal edits.
-- Add approval permissions for Finance Manager and Admin.
+- [x] Create reconciliation runs with period start and period end.
+- [x] Implement run statuses: draft, in_progress, ready_for_review, approved, reopened. Draft/in_progress/reopened transition to ready_for_review on submission, and ready_for_review transitions to approved on approval.
+- [x] Show unmatched bank and ledger candidates for a run.
+- [x] Support manual bank-to-ledger matching.
+- [x] Support match confirmation and removal by status change.
+- [ ] Support match rejection by status change.
+- [x] Support match correction (replace one side of a confirmed match with a required reason, preserving history via `correctedFromMatchId`).
+- [x] Support run reopening (`approved` → `reopened`) by a user with `reconciliation.approve` and a required reason, preserving prior approval history.
+- [x] Update related transaction statuses after confirmed matches, and revert them to unmatched when a match is removed or corrected.
+- [ ] Allow unresolved records to be marked as exceptions.
+- [x] Lock ready-for-review and approved runs from normal edits.
+- [x] Add approval permissions for Finance Manager and Admin. The `reconciliation.approve` permission is defined in `types/permissions.ts`, mapped in `lib/permissions/roles.ts`, and enforced server-side in the run-approval and run-reopen actions; `reconciliation.run` is enforced for match creation, removal, correction, and submission for review.
+- [x] Harden match removal/correction against concurrent run lifecycle transitions: atomically re-verify (CAS) the parent run is still editable immediately before mutating match state, so a run submission or approval racing a match edit cannot both succeed.
 
 Dependencies:
 
