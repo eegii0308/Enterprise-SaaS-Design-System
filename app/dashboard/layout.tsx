@@ -1,5 +1,6 @@
 import Link from "next/link";
 import {
+  Building2,
   ClipboardList,
   FileClock,
   FileText,
@@ -38,6 +39,7 @@ const navigationItems = [
   { label: t("navigation.transactions"), href: "/dashboard/transactions", icon: Landmark },
   { label: t("navigation.imports"), href: "/dashboard/imports", icon: Upload },
   { label: t("navigation.reconciliation"), href: "/dashboard/reconciliation", icon: ListChecks },
+  { label: t("navigation.bankAccounts"), href: "/dashboard/bank-accounts", icon: Building2 },
   { label: t("navigation.matchingRules"), href: "/dashboard/matching-rules", icon: ClipboardList },
   { label: t("navigation.reports"), href: "/dashboard/reports", icon: FileText },
   { label: t("navigation.auditLogs"), href: "/dashboard/audit-logs", icon: FileClock },

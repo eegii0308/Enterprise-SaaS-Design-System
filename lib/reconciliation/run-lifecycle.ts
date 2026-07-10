@@ -2,6 +2,7 @@ import {
   ReconciliationMatchStatus,
   ReconciliationRunStatus,
   type Prisma,
+  type BankAccount,
   type ReconciliationRun,
 } from "@prisma/client";
 import { prisma } from "../db/client.ts";
@@ -23,6 +24,13 @@ type LifecycleContext = {
   userId: string;
 };
 
+export type CreateRunInput = {
+  bankAccountId: string;
+  periodStart: Date;
+  periodEnd: Date;
+  name: string;
+};
+
 export type SubmitRunInput = {
   reconciliationRunId: string;
 };
@@ -38,11 +46,20 @@ export type ReopenRunInput = {
 
 type RunRecord = Pick<ReconciliationRun, "id" | "organizationId" | "status">;
 
+type BankAccountRecord = Pick<BankAccount, "id" | "organizationId" | "status">;
+
+type OverlappingRunRecord = Pick<ReconciliationRun, "id">;
+
 type UpdateManyResult = { count: number };
 
 type RunLifecycleTransactionClient = {
+  bankAccount: {
+    findUnique(args: unknown): Promise<BankAccountRecord | null>;
+  };
   reconciliationRun: {
+    findFirst(args: unknown): Promise<OverlappingRunRecord | null>;
     findUnique(args: unknown): Promise<RunRecord | null>;
+    create(args: unknown): Promise<Pick<ReconciliationRun, "id" | "status">>;
     update(args: unknown): Promise<unknown>;
     updateMany(args: unknown): Promise<UpdateManyResult>;
   };
@@ -56,6 +73,11 @@ type RunLifecycleTransactionClient = {
 
 export type RunLifecycleDatabase = {
   $transaction<T>(callback: (tx: RunLifecycleTransactionClient) => Promise<T>): Promise<T>;
+};
+
+export type CreateRunResult = {
+  reconciliationRunId: string;
+  status: ReconciliationRunStatus;
 };
 
 export type SubmitRunResult = {
@@ -73,39 +95,127 @@ export type ReopenRunResult = {
   status: ReconciliationRunStatus;
 };
 
-export type RunSummary = {
-  id: string;
-  status: ReconciliationRunStatus;
-  createdAt: Date;
-};
+// A reconciliation run is "open" for the duration between explicit creation
+// and submission for review; only one open run may exist per bank account
+// per overlapping period, so the workspace never has to guess which run a
+// newly imported transaction belongs to.
+export const openRunStatuses: ReconciliationRunStatus[] = [
+  ReconciliationRunStatus.DRAFT,
+  ReconciliationRunStatus.IN_PROGRESS,
+  ReconciliationRunStatus.REOPENED,
+];
 
-const currentRunPriority: Record<ReconciliationRunStatus, number> = {
-  [ReconciliationRunStatus.READY_FOR_REVIEW]: 0,
-  [ReconciliationRunStatus.IN_PROGRESS]: 1,
-  [ReconciliationRunStatus.DRAFT]: 2,
-  [ReconciliationRunStatus.REOPENED]: 3,
-  [ReconciliationRunStatus.APPROVED]: 4,
-};
+function validateCreateInput(input: CreateRunInput) {
+  if (!input.bankAccountId) {
+    throw new RunLifecycleError("bankAccountId is required.", "VALIDATION");
+  }
 
-export function selectCurrentRun<T extends RunSummary>(runs: readonly T[]): T | null {
-  return runs.reduce<T | null>((current, candidate) => {
-    if (!current) {
-      return candidate;
+  if (!input.name || input.name.trim().length === 0) {
+    throw new RunLifecycleError("A reconciliation run name is required.", "VALIDATION");
+  }
+
+  if (Number.isNaN(input.periodStart.getTime()) || Number.isNaN(input.periodEnd.getTime())) {
+    throw new RunLifecycleError("A valid period start and end date are required.", "VALIDATION");
+  }
+
+  if (input.periodStart.getTime() > input.periodEnd.getTime()) {
+    throw new RunLifecycleError("The period start date must not be after the period end date.", "VALIDATION");
+  }
+}
+
+function assertBankAccountAccess(
+  bankAccount: BankAccountRecord | null,
+  bankAccountId: string,
+  organizationId: string,
+): asserts bankAccount is BankAccountRecord {
+  if (!bankAccount) {
+    throw new RunLifecycleError(`Bank account ${bankAccountId} was not found.`, "VALIDATION");
+  }
+
+  if (bankAccount.organizationId !== organizationId) {
+    throw new RunLifecycleError("Bank account does not belong to the current organization.", "FORBIDDEN");
+  }
+
+  if (bankAccount.status !== "active") {
+    throw new RunLifecycleError("Bank account is not active.", "VALIDATION");
+  }
+}
+
+export async function createReconciliationRun(
+  input: CreateRunInput,
+  context: LifecycleContext,
+  database: RunLifecycleDatabase = prisma as RunLifecycleDatabase,
+): Promise<CreateRunResult> {
+  validateCreateInput(input);
+
+  return database.$transaction(async (tx) => {
+    const bankAccount = await tx.bankAccount.findUnique({
+      where: { id: input.bankAccountId },
+      select: { id: true, organizationId: true, status: true },
+    });
+
+    assertBankAccountAccess(bankAccount, input.bankAccountId, context.organizationId);
+
+    // A bank account should not have two open (unsubmitted) runs covering
+    // overlapping periods at once; that would make it ambiguous which run a
+    // given bank transaction belongs to while both are in progress.
+    const overlappingRun = await tx.reconciliationRun.findFirst({
+      where: {
+        organizationId: context.organizationId,
+        bankAccountId: input.bankAccountId,
+        status: { in: openRunStatuses },
+        periodStart: { lte: input.periodEnd },
+        periodEnd: { gte: input.periodStart },
+      },
+      select: { id: true },
+    });
+
+    if (overlappingRun) {
+      throw new RunLifecycleError(
+        "An open reconciliation run already exists for this bank account with an overlapping period.",
+        "CONFLICT",
+      );
     }
 
-    const currentPriority = currentRunPriority[current.status];
-    const candidatePriority = currentRunPriority[candidate.status];
+    const createdAt = new Date();
+    const run = await tx.reconciliationRun.create({
+      data: {
+        organizationId: context.organizationId,
+        bankAccountId: input.bankAccountId,
+        name: input.name,
+        periodStart: input.periodStart,
+        periodEnd: input.periodEnd,
+        status: ReconciliationRunStatus.DRAFT,
+        createdBy: context.userId,
+        createdAt,
+      },
+      select: { id: true, status: true },
+    });
 
-    if (candidatePriority < currentPriority) {
-      return candidate;
-    }
+    await tx.auditLog.create({
+      data: {
+        organizationId: context.organizationId,
+        actorUserId: context.userId,
+        action: "RECONCILIATION_RUN_CREATED",
+        resourceType: "reconciliationRun",
+        resourceId: run.id,
+        metadata: {
+          organizationId: context.organizationId,
+          userId: context.userId,
+          reconciliationRunId: run.id,
+          bankAccountId: input.bankAccountId,
+          periodStart: input.periodStart.toISOString(),
+          periodEnd: input.periodEnd.toISOString(),
+          timestamp: createdAt.toISOString(),
+        } satisfies Prisma.JsonObject,
+      },
+    });
 
-    if (candidatePriority === currentPriority && candidate.createdAt > current.createdAt) {
-      return candidate;
-    }
-
-    return current;
-  }, null);
+    return {
+      reconciliationRunId: run.id,
+      status: run.status,
+    };
+  });
 }
 
 function validateRunId(reconciliationRunId: string) {
@@ -128,14 +238,8 @@ function assertRunAccess(
   }
 }
 
-const submittableStatuses: ReconciliationRunStatus[] = [
-  ReconciliationRunStatus.DRAFT,
-  ReconciliationRunStatus.IN_PROGRESS,
-  ReconciliationRunStatus.REOPENED,
-];
-
 function assertSubmittable(run: RunRecord) {
-  if (!submittableStatuses.includes(run.status)) {
+  if (!openRunStatuses.includes(run.status)) {
     throw new RunLifecycleError("Only draft, in-progress, or reopened runs can be submitted for review.", "CONFLICT");
   }
 }
@@ -190,13 +294,13 @@ export async function submitReconciliationRunForReview(
 
     const submittedAt = new Date();
     // CAS keyed on the previously read status: contends on the same run row
-    // as findOrCreateManualRun's lock-touch in manual-match.ts, so a
-    // concurrent submit and a concurrent manual match cannot both win.
+    // as assertRunEditable's lock-touch in manual-match.ts, so a concurrent
+    // submit and a concurrent manual match cannot both win.
     const transitionResult = await tx.reconciliationRun.updateMany({
       where: {
         id: run.id,
         organizationId: context.organizationId,
-        status: { in: submittableStatuses },
+        status: { in: openRunStatuses },
       },
       data: { status: ReconciliationRunStatus.READY_FOR_REVIEW },
     });

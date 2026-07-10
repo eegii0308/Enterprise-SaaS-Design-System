@@ -110,18 +110,25 @@ model RolePermission {
 }
 
 model BankAccount {
-  id                  String        @id @default(cuid())
-  organizationId      String        @map("organization_id")
+  id                  String              @id @default(cuid())
+  organizationId      String              @map("organization_id")
   name                String
-  bankName            String        @map("bank_name")
-  maskedAccountNumber String        @map("masked_account_number")
+  bankName            String              @map("bank_name")
+  maskedAccountNumber String              @map("masked_account_number")
   currency            String
-  status              String        @default("active")
-  createdAt           DateTime      @default(now()) @map("created_at")
-  updatedAt           DateTime      @updatedAt @map("updated_at")
-  organization        Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  status              String              @default("active")
+  createdAt           DateTime            @default(now()) @map("created_at")
+  updatedAt           DateTime            @updatedAt @map("updated_at")
+  organization        Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   transactions        Transaction[]
+  reconciliationRuns  ReconciliationRun[]
 
+  // A partial unique index on (organization_id, bank_name, masked_account_number)
+  // WHERE status = 'active' also exists (added in migration
+  // 20260710050000_phase_7d_bank_account_management) to prevent duplicate
+  // active accounts; Prisma's schema DSL cannot express a WHERE-qualified
+  // unique index, so it is not declared here.
+  @@index([organizationId, status])
   @@map("bank_accounts")
 }
 
@@ -250,6 +257,7 @@ model TransactionAdjustment {
 model ReconciliationRun {
   id             String                  @id @default(cuid())
   organizationId String                  @map("organization_id")
+  bankAccountId  String                  @map("bank_account_id")
   name           String
   periodStart    DateTime                @map("period_start")
   periodEnd      DateTime                @map("period_end")
@@ -263,8 +271,10 @@ model ReconciliationRun {
   completedAt    DateTime?               @map("completed_at")
   matches        ReconciliationMatch[]
   organization   Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  bankAccount    BankAccount             @relation(fields: [bankAccountId], references: [id])
 
   @@index([organizationId, status])
+  @@index([organizationId, bankAccountId, status], map: "reconciliation_runs_organization_bank_account_status_idx")
   @@map("reconciliation_runs")
 }
 

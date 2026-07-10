@@ -46,21 +46,23 @@ The product should first become a working reconciliation SaaS, not a complete en
 
 ## Phase 4: Reconciliation
 
-Status: Manual match creation, confirmed-match removal (unmatch), match correction, and the full reconciliation run lifecycle (submit for review, approve, reopen) are implemented in the reconciliation workspace, backed by automated tests, including regression tests for concurrent match edits racing run lifecycle transitions. Match rejection and exception status are not yet implemented.
+Status: Explicit reconciliation run creation, manual match creation, confirmed-match removal (unmatch), match correction, match rejection, exception marking, and the full reconciliation run lifecycle (create, submit for review, approve, reopen) are implemented in the reconciliation workspace, backed by automated tests, including regression tests for concurrent match edits racing run lifecycle transitions.
 
-- Implement reconciliation run creation. (done — a manual run is created automatically on the first confirmed match)
-- Show unmatched bank and ledger transactions. (done)
-- Support manual matching. (done)
-- Support match confirmation/rejection. (confirmation done; rejection not yet implemented)
+- Implement reconciliation run creation. (done — a run is created explicitly by selecting a bank account and reconciliation period; a run previously created automatically on the first confirmed match)
+- Show unmatched bank and ledger transactions, scoped to the selected run's bank account and period. (done)
+- Support manual matching, validated against the selected run's bank account and period. (done)
+- Support match confirmation/rejection. (done)
 - Support match removal (unmatch) of confirmed matches, reverting both transactions to unmatched. (done)
 - Support match correction, replacing one side of a confirmed match with a required reason and preserving history via `correctedFromMatchId`. (done)
 - Update transaction statuses after confirmed matches. (done)
-- Add exception status and review notes. (not yet implemented)
+- Add exception status and review notes. (exception marking/clearing done; review notes not yet implemented)
 - Add lifecycle states: draft, in progress, ready for review, approved, reopened. (done — submit-for-review, approval, and reopening transitions are implemented)
 - Lock matches from being created, removed, or corrected while a run is ready for review or approved. (done — atomically re-verified via CAS immediately before each mutation, not just at read time)
 - Add approval permissions and audit logs. (done — `reconciliation.run` and `reconciliation.approve` are enforced server-side, and match creation, match removal, match correction, run submission, run approval, and run reopening each write audit log events)
+- Prevent overlapping open reconciliation runs for the same bank account and period. (done)
+- Manage bank accounts (create, edit, archive, reactivate), restricted to Admin/Finance Manager via a `bank_accounts.manage` permission, preventing duplicate active accounts for the same bank and account number while keeping archived accounts' historical reconciliation references intact. (done — `/dashboard/bank-accounts`)
 
-Next planned work: match rejection and exception marking for unresolved records.
+Next planned work: review notes on exceptions/unresolved records; automated matching rules (numbered Phase 7 below).
 
 ## Phase 5: Audit And Controls
 

@@ -2,14 +2,18 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { ReconciliationMatchStatus, ReconciliationRunStatus, SourceType, TransactionStatus } from "@prisma/client";
 import {
+  manuallyMatchTransactions,
   correctManualMatch,
   rejectManualMatch,
+  type ManualMatchInput,
   type CorrectMatchInput,
   type RejectMatchInput,
   type ManualMatchDatabase,
 } from "../lib/reconciliation/manual-match.ts";
 import {
+  createReconciliationRun,
   reopenReconciliationRun,
+  type CreateRunInput,
   type ReopenRunInput,
   type RunLifecycleDatabase,
 } from "../lib/reconciliation/run-lifecycle.ts";
@@ -64,6 +68,26 @@ function assertPermission(role: RoleName, permission: string) {
 }
 
 type ActionContext = { organizationId: string; userId: string };
+
+async function simulateCreateReconciliationRunAction(
+  role: RoleName,
+  input: CreateRunInput,
+  context: ActionContext,
+  database: RunLifecycleDatabase,
+) {
+  assertPermission(role, "reconciliation.run");
+  return createReconciliationRun(input, context, database);
+}
+
+async function simulateManuallyMatchTransactionsAction(
+  role: RoleName,
+  input: ManualMatchInput,
+  context: ActionContext,
+  database: ManualMatchDatabase,
+) {
+  assertPermission(role, "reconciliation.run");
+  return manuallyMatchTransactions(input, context, database);
+}
 
 async function simulateCorrectManualMatchAction(
   role: RoleName,
@@ -125,6 +149,7 @@ type MockTransaction = {
   sourceType: SourceType;
   status: TransactionStatus;
   transactionDate: Date;
+  bankAccountId: string | null;
 };
 
 type MockMatchRecord = {
@@ -136,10 +161,31 @@ type MockMatchRecord = {
   reconciliationRunId: string;
 };
 
+type MockRunRecord = {
+  id: string;
+  organizationId: string;
+  status: ReconciliationRunStatus;
+  bankAccountId: string;
+  periodStart: Date;
+  periodEnd: Date;
+};
+
+function mockRun(overrides: Partial<MockRunRecord> = {}): MockRunRecord {
+  return {
+    id: "run-1",
+    organizationId: "org-1",
+    status: ReconciliationRunStatus.IN_PROGRESS,
+    bankAccountId: "account-1",
+    periodStart: new Date("2026-02-01T00:00:00.000Z"),
+    periodEnd: new Date("2026-02-28T23:59:59.999Z"),
+    ...overrides,
+  };
+}
+
 type MatchCorrectionState = {
   transactions: MockTransaction[];
   matchRecord?: MockMatchRecord | null;
-  matchParentRun?: { id: string; status: ReconciliationRunStatus } | null;
+  matchParentRun?: MockRunRecord | null;
   createdMatches: unknown[];
   releaseUpdates: unknown[];
   matchRemovalCalls: unknown[];
@@ -156,6 +202,7 @@ function createMatchCorrectionDatabase(): ManualMatchDatabase & { state: MatchCo
         sourceType: SourceType.BANK,
         status: TransactionStatus.UNMATCHED,
         transactionDate: new Date("2026-02-01T00:00:00.000Z"),
+        bankAccountId: "account-1",
       },
     ],
     matchRecord: {
@@ -166,7 +213,7 @@ function createMatchCorrectionDatabase(): ManualMatchDatabase & { state: MatchCo
       ledgerTransactionId: "ledger-1",
       reconciliationRunId: "run-1",
     },
-    matchParentRun: { id: "run-1", status: ReconciliationRunStatus.IN_PROGRESS },
+    matchParentRun: mockRun(),
     createdMatches: [],
     releaseUpdates: [],
     matchRemovalCalls: [],
@@ -211,14 +258,8 @@ function createMatchCorrectionDatabase(): ManualMatchDatabase & { state: MatchCo
           },
         },
         reconciliationRun: {
-          async findFirst() {
-            return null;
-          },
           async findUnique() {
             return state.matchParentRun ?? null;
-          },
-          async create() {
-            return { id: "run-created" };
           },
           async updateMany() {
             return { count: 1 };
@@ -245,7 +286,7 @@ const correctInput: CorrectMatchInput = {
 
 type MatchRejectionState = {
   matchRecord?: MockMatchRecord | null;
-  matchParentRun?: { id: string; status: ReconciliationRunStatus } | null;
+  matchParentRun?: MockRunRecord | null;
   updates: unknown[];
   matchUpdates: unknown[];
   auditLogs: unknown[];
@@ -261,7 +302,7 @@ function createMatchRejectionDatabase(): ManualMatchDatabase & { state: MatchRej
       ledgerTransactionId: "ledger-1",
       reconciliationRunId: "run-1",
     },
-    matchParentRun: { id: "run-1", status: ReconciliationRunStatus.IN_PROGRESS },
+    matchParentRun: mockRun(),
     updates: [],
     matchUpdates: [],
     auditLogs: [],
@@ -302,14 +343,8 @@ function createMatchRejectionDatabase(): ManualMatchDatabase & { state: MatchRej
           },
         },
         reconciliationRun: {
-          async findFirst() {
-            return null;
-          },
           async findUnique() {
             return state.matchParentRun ?? null;
-          },
-          async create() {
-            return { id: "run-created" };
           },
           async updateMany() {
             return { count: 1 };
@@ -347,9 +382,20 @@ function createReopenRunDatabase(): RunLifecycleDatabase & { state: ReopenRunSta
     state,
     async $transaction(callback) {
       return callback({
+        bankAccount: {
+          async findUnique() {
+            return { id: "account-1", organizationId: "org-1", status: "active" };
+          },
+        },
         reconciliationRun: {
+          async findFirst() {
+            return null;
+          },
           async findUnique() {
             return state.run ?? null;
+          },
+          async create() {
+            return { id: "run-new", status: ReconciliationRunStatus.DRAFT };
           },
           async update(args) {
             state.runUpdates.push(args);
@@ -376,7 +422,108 @@ function createReopenRunDatabase(): RunLifecycleDatabase & { state: ReopenRunSta
   };
 }
 
+const createRunInput: CreateRunInput = {
+  bankAccountId: "account-1",
+  periodStart: new Date("2026-06-01T00:00:00.000Z"),
+  periodEnd: new Date("2026-06-30T23:59:59.999Z"),
+  name: "June 2026 operating account",
+};
+
 const reopenInput: ReopenRunInput = { reconciliationRunId: "run-1", reason: "Discrepancy found after approval" };
+
+// ---- manuallyMatchTransactionsAction mock database ----
+
+type ManualMatchActionState = {
+  transactions: MockTransaction[];
+  existingMatch?: { id: string } | null;
+  run?: MockRunRecord | null;
+  createdMatches: unknown[];
+  auditLogs: unknown[];
+};
+
+function createManualMatchActionDatabase(): ManualMatchDatabase & { state: ManualMatchActionState } {
+  const state: ManualMatchActionState = {
+    transactions: [
+      {
+        id: "bank-1",
+        organizationId: "org-1",
+        sourceType: SourceType.BANK,
+        status: TransactionStatus.UNMATCHED,
+        transactionDate: new Date("2026-02-05T00:00:00.000Z"),
+        bankAccountId: "account-1",
+      },
+      {
+        id: "ledger-1",
+        organizationId: "org-1",
+        sourceType: SourceType.LEDGER,
+        status: TransactionStatus.UNMATCHED,
+        transactionDate: new Date("2026-02-06T00:00:00.000Z"),
+        bankAccountId: null,
+      },
+    ],
+    existingMatch: null,
+    run: mockRun(),
+    createdMatches: [],
+    auditLogs: [],
+  };
+
+  return {
+    state,
+    async $transaction(callback) {
+      return callback({
+        transaction: {
+          async findMany() {
+            return state.transactions;
+          },
+          async update() {
+            return {};
+          },
+          async updateMany() {
+            return { count: 2 };
+          },
+        },
+        reconciliationMatch: {
+          async findFirst() {
+            return state.existingMatch ?? null;
+          },
+          async findUnique() {
+            return null;
+          },
+          async create(args) {
+            state.createdMatches.push(args);
+            return { id: "match-new" };
+          },
+          async update() {
+            return {};
+          },
+          async updateMany() {
+            return { count: 1 };
+          },
+        },
+        reconciliationRun: {
+          async findUnique() {
+            return state.run ?? null;
+          },
+          async updateMany() {
+            return { count: 1 };
+          },
+        },
+        auditLog: {
+          async create(args) {
+            state.auditLogs.push(args);
+            return {};
+          },
+        },
+      });
+    },
+  };
+}
+
+const manualMatchInput: ManualMatchInput = {
+  reconciliationRunId: "run-1",
+  bankTransactionId: "bank-1",
+  ledgerTransactionId: "ledger-1",
+};
 
 // ---- markTransactionExceptionAction / clearTransactionExceptionAction mock database ----
 
@@ -512,6 +659,61 @@ for (const role of ["ACCOUNTANT", "AUDITOR", "VIEWER"] as const) {
     );
 
     assert.equal(db.state.runUpdates.length, 0);
+    assert.equal(db.state.auditLogs.length, 0);
+  });
+}
+
+// ---- createReconciliationRunAction: allowed roles ----
+
+for (const role of ["ACCOUNTANT", "FINANCE_MANAGER", "ADMIN"] as const) {
+  test(`createReconciliationRunAction allows ${role} and executes the domain function`, async () => {
+    const db = createReopenRunDatabase();
+
+    const result = await simulateCreateReconciliationRunAction(role, createRunInput, context, db);
+
+    assert.equal(result.status, ReconciliationRunStatus.DRAFT);
+  });
+}
+
+// ---- createReconciliationRunAction: denied roles ----
+
+for (const role of ["AUDITOR", "VIEWER"] as const) {
+  test(`createReconciliationRunAction denies ${role} with FORBIDDEN and never calls the domain function`, async () => {
+    const db = createReopenRunDatabase();
+
+    await assert.rejects(
+      simulateCreateReconciliationRunAction(role, createRunInput, context, db),
+      (error) => error instanceof SimulatedPermissionError && error.code === "FORBIDDEN",
+    );
+  });
+}
+
+// ---- manuallyMatchTransactionsAction: allowed roles ----
+
+for (const role of ["ACCOUNTANT", "FINANCE_MANAGER", "ADMIN"] as const) {
+  test(`manuallyMatchTransactionsAction allows ${role} and executes the domain function`, async () => {
+    const db = createManualMatchActionDatabase();
+
+    const result = await simulateManuallyMatchTransactionsAction(role, manualMatchInput, context, db);
+
+    assert.equal(result.reconciliationMatchId, "match-new");
+    assert.equal(db.state.createdMatches.length, 1);
+    assert.equal(db.state.auditLogs.length, 1);
+  });
+}
+
+// ---- manuallyMatchTransactionsAction: denied roles ----
+
+for (const role of ["AUDITOR", "VIEWER"] as const) {
+  test(`manuallyMatchTransactionsAction denies ${role} with FORBIDDEN and never calls the domain function`, async () => {
+    const db = createManualMatchActionDatabase();
+
+    await assert.rejects(
+      simulateManuallyMatchTransactionsAction(role, manualMatchInput, context, db),
+      (error) => error instanceof SimulatedPermissionError && error.code === "FORBIDDEN",
+    );
+
+    assert.equal(db.state.createdMatches.length, 0);
     assert.equal(db.state.auditLogs.length, 0);
   });
 }

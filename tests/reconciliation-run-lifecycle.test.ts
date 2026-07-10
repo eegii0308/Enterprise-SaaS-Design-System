@@ -2,11 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { ReconciliationRunStatus } from "@prisma/client";
 import {
+  createReconciliationRun,
   submitReconciliationRunForReview,
   approveReconciliationRun,
   reopenReconciliationRun,
-  selectCurrentRun,
   type RunLifecycleDatabase,
+  type CreateRunInput,
   type SubmitRunInput,
   type ApproveRunInput,
   type ReopenRunInput,
@@ -19,10 +20,19 @@ type MockRun = {
   status: ReconciliationRunStatus;
 };
 
+type MockBankAccount = {
+  id: string;
+  organizationId: string;
+  status: string;
+};
+
 type MockState = {
   run?: MockRun | null;
+  bankAccount?: MockBankAccount | null;
+  overlappingRun?: { id: string } | null;
   confirmedMatchCount: number;
   runUpdates: unknown[];
+  runCreates: unknown[];
   auditLogs: unknown[];
   transitionCount?: number;
 };
@@ -41,11 +51,23 @@ function run(overrides: Partial<MockRun> = {}): MockRun {
   };
 }
 
+function bankAccount(overrides: Partial<MockBankAccount> = {}): MockBankAccount {
+  return {
+    id: "account-1",
+    organizationId: "org-1",
+    status: "active",
+    ...overrides,
+  };
+}
+
 function createDatabase(state: Partial<MockState> = {}): RunLifecycleDatabase & { state: MockState } {
   const fullState: MockState = {
     run: run(),
+    bankAccount: bankAccount(),
+    overlappingRun: null,
     confirmedMatchCount: 1,
     runUpdates: [],
+    runCreates: [],
     auditLogs: [],
     ...state,
   };
@@ -54,9 +76,21 @@ function createDatabase(state: Partial<MockState> = {}): RunLifecycleDatabase & 
     state: fullState,
     async $transaction(callback) {
       return callback({
+        bankAccount: {
+          async findUnique() {
+            return fullState.bankAccount ?? null;
+          },
+        },
         reconciliationRun: {
+          async findFirst() {
+            return fullState.overlappingRun ?? null;
+          },
           async findUnique() {
             return fullState.run ?? null;
+          },
+          async create(args) {
+            fullState.runCreates.push(args);
+            return { id: "new-run-1", status: ReconciliationRunStatus.DRAFT };
           },
           async update(args) {
             fullState.runUpdates.push(args);
@@ -83,9 +117,101 @@ function createDatabase(state: Partial<MockState> = {}): RunLifecycleDatabase & 
   };
 }
 
+const createInput: CreateRunInput = {
+  bankAccountId: "account-1",
+  periodStart: new Date("2026-06-01T00:00:00.000Z"),
+  periodEnd: new Date("2026-06-30T23:59:59.999Z"),
+  name: "June 2026 operating account",
+};
 const submitInput: SubmitRunInput = { reconciliationRunId: "run-1" };
 const approveInput: ApproveRunInput = { reconciliationRunId: "run-1" };
 const reopenInput: ReopenRunInput = { reconciliationRunId: "run-1", reason: "Discrepancy found after approval" };
+
+test("createReconciliationRun creates a draft run scoped to the bank account and period, and audits it", async () => {
+  const db = createDatabase();
+
+  const result = await createReconciliationRun(createInput, context, db);
+
+  assert.deepEqual(result, { reconciliationRunId: "new-run-1", status: ReconciliationRunStatus.DRAFT });
+  assert.equal(db.state.runCreates.length, 1);
+  const create = db.state.runCreates[0] as { data: Record<string, unknown> };
+  assert.equal(create.data.organizationId, "org-1");
+  assert.equal(create.data.bankAccountId, "account-1");
+  assert.equal(create.data.name, "June 2026 operating account");
+  assert.equal(create.data.status, ReconciliationRunStatus.DRAFT);
+  assert.equal(create.data.createdBy, "user-1");
+
+  assert.equal(db.state.auditLogs.length, 1);
+  const auditLog = db.state.auditLogs[0] as {
+    data: { action: string; resourceId: string; metadata: Record<string, string> };
+  };
+  assert.equal(auditLog.data.action, "RECONCILIATION_RUN_CREATED");
+  assert.equal(auditLog.data.resourceId, "new-run-1");
+  assert.equal(auditLog.data.metadata.bankAccountId, "account-1");
+});
+
+test("createReconciliationRun rejects a missing bankAccountId, name, or invalid period", async () => {
+  const db = createDatabase();
+
+  await assert.rejects(
+    createReconciliationRun({ ...createInput, bankAccountId: "" }, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "VALIDATION",
+  );
+  await assert.rejects(
+    createReconciliationRun({ ...createInput, name: "  " }, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "VALIDATION",
+  );
+  await assert.rejects(
+    createReconciliationRun({ ...createInput, periodStart: new Date("not-a-date") }, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "VALIDATION",
+  );
+  await assert.rejects(
+    createReconciliationRun(
+      { ...createInput, periodStart: new Date("2026-06-30"), periodEnd: new Date("2026-06-01") },
+      context,
+      db,
+    ),
+    (error) => error instanceof RunLifecycleError && error.code === "VALIDATION",
+  );
+  assert.equal(db.state.runCreates.length, 0);
+});
+
+test("createReconciliationRun rejects an unknown bank account", async () => {
+  const db = createDatabase({ bankAccount: null });
+
+  await assert.rejects(
+    createReconciliationRun(createInput, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "VALIDATION",
+  );
+});
+
+test("createReconciliationRun rejects a bank account from another organization", async () => {
+  const db = createDatabase({ bankAccount: bankAccount({ organizationId: "org-2" }) });
+
+  await assert.rejects(
+    createReconciliationRun(createInput, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "FORBIDDEN",
+  );
+});
+
+test("createReconciliationRun rejects an inactive bank account", async () => {
+  const db = createDatabase({ bankAccount: bankAccount({ status: "inactive" }) });
+
+  await assert.rejects(
+    createReconciliationRun(createInput, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "VALIDATION",
+  );
+});
+
+test("createReconciliationRun rejects an overlapping open run for the same bank account", async () => {
+  const db = createDatabase({ overlappingRun: { id: "existing-run" } });
+
+  await assert.rejects(
+    createReconciliationRun(createInput, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "CONFLICT",
+  );
+  assert.equal(db.state.runCreates.length, 0);
+});
 
 test("submitReconciliationRunForReview transitions an in-progress run to ready for review and audits it", async () => {
   const db = createDatabase();
@@ -410,43 +536,4 @@ test("reopenReconciliationRun rejects when a concurrent reopen or approval alrea
   );
   assert.equal(db.state.runUpdates.length, 1);
   assert.equal(db.state.auditLogs.length, 0);
-});
-
-test("selectCurrentRun prioritizes ready-for-review over in-progress, draft, reopened, and approved", () => {
-  const runs = [
-    { id: "draft", status: ReconciliationRunStatus.DRAFT, createdAt: new Date("2026-01-01") },
-    { id: "approved", status: ReconciliationRunStatus.APPROVED, createdAt: new Date("2026-01-04") },
-    { id: "ready", status: ReconciliationRunStatus.READY_FOR_REVIEW, createdAt: new Date("2026-01-02") },
-    { id: "in-progress", status: ReconciliationRunStatus.IN_PROGRESS, createdAt: new Date("2026-01-03") },
-  ];
-
-  assert.equal(selectCurrentRun(runs)?.id, "ready");
-});
-
-test("selectCurrentRun falls back through the priority order when higher-priority statuses are absent", () => {
-  assert.equal(
-    selectCurrentRun([
-      { id: "approved", status: ReconciliationRunStatus.APPROVED, createdAt: new Date("2026-01-01") },
-      { id: "reopened", status: ReconciliationRunStatus.REOPENED, createdAt: new Date("2026-01-02") },
-    ])?.id,
-    "reopened",
-  );
-
-  assert.equal(
-    selectCurrentRun([{ id: "approved-only", status: ReconciliationRunStatus.APPROVED, createdAt: new Date("2026-01-01") }])?.id,
-    "approved-only",
-  );
-});
-
-test("selectCurrentRun breaks ties within the same status by most recent createdAt", () => {
-  const result = selectCurrentRun([
-    { id: "older", status: ReconciliationRunStatus.APPROVED, createdAt: new Date("2026-01-01") },
-    { id: "newer", status: ReconciliationRunStatus.APPROVED, createdAt: new Date("2026-01-05") },
-  ]);
-
-  assert.equal(result?.id, "newer");
-});
-
-test("selectCurrentRun returns null for an empty list", () => {
-  assert.equal(selectCurrentRun([]), null);
 });

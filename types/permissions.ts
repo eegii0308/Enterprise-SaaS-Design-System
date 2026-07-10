@@ -5,6 +5,7 @@ export const permissions = [
   "imports.create",
   "reconciliation.run",
   "reconciliation.approve",
+  "bank_accounts.manage",
   "reports.view",
   "reports.export",
   "matching_rules.manage",

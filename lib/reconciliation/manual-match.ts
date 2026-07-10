@@ -11,8 +11,6 @@ import {
 } from "@prisma/client";
 import { prisma } from "../db/client.ts";
 
-const manualRunName = "Manual reconciliation";
-
 export type ManualMatchErrorCode = "VALIDATION" | "FORBIDDEN" | "CONFLICT" | "SERVER";
 
 export class ManualMatchError extends Error {
@@ -30,18 +28,22 @@ type MatchContext = {
 };
 
 export type ManualMatchInput = {
+  reconciliationRunId: string;
   bankTransactionId: string;
   ledgerTransactionId: string;
 };
 
 type TransactionRecord = Pick<
   Transaction,
-  "id" | "organizationId" | "sourceType" | "status" | "transactionDate"
+  "id" | "organizationId" | "sourceType" | "status" | "transactionDate" | "bankAccountId"
 >;
 
 type ExistingMatchRecord = Pick<ReconciliationMatch, "id">;
-type RunRecord = Pick<ReconciliationRun, "id">;
 type RunStatusRecord = Pick<ReconciliationRun, "id" | "status">;
+type RunForMatchingRecord = Pick<
+  ReconciliationRun,
+  "id" | "organizationId" | "status" | "bankAccountId" | "periodStart" | "periodEnd"
+>;
 type MatchRecord = Pick<
   ReconciliationMatch,
   "id" | "organizationId" | "status" | "bankTransactionId" | "ledgerTransactionId" | "reconciliationRunId"
@@ -63,9 +65,7 @@ type ManualMatchTransactionClient = {
     updateMany(args: unknown): Promise<UpdateManyResult>;
   };
   reconciliationRun: {
-    findFirst(args: unknown): Promise<RunStatusRecord | null>;
-    findUnique(args: unknown): Promise<RunStatusRecord | null>;
-    create(args: unknown): Promise<RunRecord>;
+    findUnique(args: unknown): Promise<RunForMatchingRecord | null>;
     updateMany(args: unknown): Promise<UpdateManyResult>;
   };
   auditLog: {
@@ -118,6 +118,20 @@ export type RejectMatchResult = {
   ledgerTransactionId: string;
 };
 
+function validateInput(input: ManualMatchInput) {
+  if (!input.reconciliationRunId) {
+    throw new ManualMatchError("reconciliationRunId is required.", "VALIDATION");
+  }
+
+  if (!input.bankTransactionId || !input.ledgerTransactionId) {
+    throw new ManualMatchError("Both bankTransactionId and ledgerTransactionId are required.", "VALIDATION");
+  }
+
+  if (input.bankTransactionId === input.ledgerTransactionId) {
+    throw new ManualMatchError("Bank and ledger transactions must be different records.", "VALIDATION");
+  }
+}
+
 function validateRemoveInput(input: RemoveMatchInput) {
   if (!input.reconciliationMatchId) {
     throw new ManualMatchError("reconciliationMatchId is required.", "VALIDATION");
@@ -168,6 +182,20 @@ function assertMatchAccess(
   }
 }
 
+function assertRunAccess(
+  run: RunForMatchingRecord | null,
+  reconciliationRunId: string,
+  organizationId: string,
+): asserts run is RunForMatchingRecord {
+  if (!run) {
+    throw new ManualMatchError(`Reconciliation run ${reconciliationRunId} was not found.`, "VALIDATION");
+  }
+
+  if (run.organizationId !== organizationId) {
+    throw new ManualMatchError("Reconciliation run does not belong to the current organization.", "FORBIDDEN");
+  }
+}
+
 function assertRemovable(match: MatchRecord) {
   if (match.status !== ReconciliationMatchStatus.CONFIRMED) {
     throw new ManualMatchError("Only confirmed matches can be removed.", "CONFLICT");
@@ -186,11 +214,31 @@ function assertRejectable(match: MatchRecord) {
   }
 }
 
+function assertWithinRunPeriod(transaction: TransactionRecord, run: RunForMatchingRecord, label: "bank" | "ledger") {
+  if (transaction.transactionDate < run.periodStart || transaction.transactionDate > run.periodEnd) {
+    throw new ManualMatchError(`The ${label} transaction falls outside this run's reconciliation period.`, "VALIDATION");
+  }
+}
+
+// Every transaction matched into a run must belong to that run's selected
+// bank account (bank leg only; ledger entries are not tied to a bank
+// account) and fall within its reconciliation period, so the workspace's
+// per-run views (tie-out, exceptions, transaction lists) stay accurate.
+function assertMatchWithinRun(bankTransaction: TransactionRecord, ledgerTransaction: TransactionRecord, run: RunForMatchingRecord) {
+  if (bankTransaction.bankAccountId !== run.bankAccountId) {
+    throw new ManualMatchError("The bank transaction does not belong to this run's bank account.", "VALIDATION");
+  }
+
+  assertWithinRunPeriod(bankTransaction, run, "bank");
+  assertWithinRunPeriod(ledgerTransaction, run, "ledger");
+}
+
 function assertReplacementTransaction(
   transaction: TransactionRecord | null,
   transactionId: string,
   organizationId: string,
   expectedSourceType: SourceType,
+  run: RunForMatchingRecord,
 ): asserts transaction is TransactionRecord {
   assertTransactionAccess(transaction, transactionId, organizationId);
 
@@ -201,16 +249,12 @@ function assertReplacementTransaction(
   if (transaction.status !== TransactionStatus.UNMATCHED) {
     throw new ManualMatchError("Replacement transaction must be unmatched.", "CONFLICT");
   }
-}
 
-function validateInput(input: ManualMatchInput) {
-  if (!input.bankTransactionId || !input.ledgerTransactionId) {
-    throw new ManualMatchError("Both bankTransactionId and ledgerTransactionId are required.", "VALIDATION");
+  if (expectedSourceType === SourceType.BANK && transaction.bankAccountId !== run.bankAccountId) {
+    throw new ManualMatchError("Replacement transaction does not belong to this run's bank account.", "VALIDATION");
   }
 
-  if (input.bankTransactionId === input.ledgerTransactionId) {
-    throw new ManualMatchError("Bank and ledger transactions must be different records.", "VALIDATION");
-  }
+  assertWithinRunPeriod(transaction, run, expectedSourceType === SourceType.BANK ? "bank" : "ledger");
 }
 
 function transactionById(transactions: TransactionRecord[], transactionId: string) {
@@ -245,24 +289,6 @@ function assertUnmatched(bankTransaction: TransactionRecord, ledgerTransaction: 
 
 const lockedRunStatuses: ReconciliationRunStatus[] = [ReconciliationRunStatus.READY_FOR_REVIEW, ReconciliationRunStatus.APPROVED];
 
-async function assertNoRunPendingReview(tx: ManualMatchTransactionClient, context: MatchContext) {
-  const pendingRun = await tx.reconciliationRun.findFirst({
-    where: {
-      organizationId: context.organizationId,
-      name: manualRunName,
-      status: ReconciliationRunStatus.READY_FOR_REVIEW,
-    },
-    select: { id: true },
-  });
-
-  if (pendingRun) {
-    throw new ManualMatchError(
-      "A reconciliation run is awaiting approval. New matches cannot be created until it is approved.",
-      "CONFLICT",
-    );
-  }
-}
-
 function assertRunNotLocked(run: RunStatusRecord | null) {
   if (run && lockedRunStatuses.includes(run.status)) {
     throw new ManualMatchError(
@@ -282,7 +308,8 @@ async function assertRunEditable(tx: ManualMatchTransactionClient, run: RunStatu
   // Status-preserving CAS: locks the run row and re-verifies its status is
   // unchanged, so a concurrent submitReconciliationRunForReview/approval that
   // transitions the run to READY_FOR_REVIEW or APPROVED between the read
-  // above and this point cannot let a match removal/correction slip through.
+  // above and this point cannot let a match creation/removal/correction slip
+  // through.
   const lockResult = await tx.reconciliationRun.updateMany({
     where: {
       id: run.id,
@@ -300,73 +327,6 @@ async function assertRunEditable(tx: ManualMatchTransactionClient, run: RunStatu
   }
 }
 
-const openRunStatuses: ReconciliationRunStatus[] = [
-  ReconciliationRunStatus.DRAFT,
-  ReconciliationRunStatus.IN_PROGRESS,
-  ReconciliationRunStatus.REOPENED,
-];
-
-async function findOrCreateManualRun(
-  tx: ManualMatchTransactionClient,
-  context: MatchContext,
-  bankTransaction: TransactionRecord,
-  ledgerTransaction: TransactionRecord,
-) {
-  const existingRun = await tx.reconciliationRun.findFirst({
-    where: {
-      organizationId: context.organizationId,
-      name: manualRunName,
-      status: { in: openRunStatuses },
-    },
-    orderBy: { createdAt: "desc" },
-    select: { id: true, status: true },
-  });
-
-  if (existingRun) {
-    // Status-preserving CAS: locks the run row and re-checks it is still open,
-    // so a concurrent submitReconciliationRunForReview cannot slip a match in
-    // after (or lose to) the run's transition to READY_FOR_REVIEW.
-    const lockResult = await tx.reconciliationRun.updateMany({
-      where: {
-        id: existingRun.id,
-        organizationId: context.organizationId,
-        status: existingRun.status,
-      },
-      data: { status: existingRun.status },
-    });
-
-    if (lockResult.count === 0) {
-      throw new ManualMatchError(
-        "The open reconciliation run changed before this match could be saved. Please retry.",
-        "CONFLICT",
-      );
-    }
-
-    return existingRun;
-  }
-
-  const periodStart =
-    bankTransaction.transactionDate < ledgerTransaction.transactionDate
-      ? bankTransaction.transactionDate
-      : ledgerTransaction.transactionDate;
-  const periodEnd =
-    bankTransaction.transactionDate > ledgerTransaction.transactionDate
-      ? bankTransaction.transactionDate
-      : ledgerTransaction.transactionDate;
-
-  return tx.reconciliationRun.create({
-    data: {
-      organizationId: context.organizationId,
-      name: manualRunName,
-      periodStart,
-      periodEnd,
-      status: ReconciliationRunStatus.IN_PROGRESS,
-      createdBy: context.userId,
-    },
-    select: { id: true },
-  });
-}
-
 export async function manuallyMatchTransactions(
   input: ManualMatchInput,
   context: MatchContext,
@@ -375,6 +335,14 @@ export async function manuallyMatchTransactions(
   validateInput(input);
 
   return database.$transaction(async (tx) => {
+    const run = await tx.reconciliationRun.findUnique({
+      where: { id: input.reconciliationRunId },
+      select: { id: true, organizationId: true, status: true, bankAccountId: true, periodStart: true, periodEnd: true },
+    });
+
+    assertRunAccess(run, input.reconciliationRunId, context.organizationId);
+    await assertRunEditable(tx, run, context.organizationId);
+
     const transactions = await tx.transaction.findMany({
       where: {
         id: { in: [input.bankTransactionId, input.ledgerTransactionId] },
@@ -385,6 +353,7 @@ export async function manuallyMatchTransactions(
         sourceType: true,
         status: true,
         transactionDate: true,
+        bankAccountId: true,
       },
     });
 
@@ -395,6 +364,7 @@ export async function manuallyMatchTransactions(
     assertTransactionAccess(ledgerTransaction, input.ledgerTransactionId, context.organizationId);
     assertSourceTypes(bankTransaction, ledgerTransaction);
     assertUnmatched(bankTransaction, ledgerTransaction);
+    assertMatchWithinRun(bankTransaction, ledgerTransaction, run);
 
     const existingMatch = await tx.reconciliationMatch.findFirst({
       where: {
@@ -411,10 +381,6 @@ export async function manuallyMatchTransactions(
     if (existingMatch) {
       throw new ManualMatchError("One or both transactions are already matched.", "CONFLICT");
     }
-
-    await assertNoRunPendingReview(tx, context);
-
-    const reconciliationRun = await findOrCreateManualRun(tx, context, bankTransaction, ledgerTransaction);
 
     // Atomic CAS: only flips both transactions to MATCHED if they are still
     // UNMATCHED at write time. This is the authoritative guard against two
@@ -437,7 +403,7 @@ export async function manuallyMatchTransactions(
     const match = await tx.reconciliationMatch.create({
       data: {
         organizationId: context.organizationId,
-        reconciliationRunId: reconciliationRun.id,
+        reconciliationRunId: run.id,
         bankTransactionId: input.bankTransactionId,
         ledgerTransactionId: input.ledgerTransactionId,
         matchType: ReconciliationMatchType.MANUAL,
@@ -458,6 +424,7 @@ export async function manuallyMatchTransactions(
         metadata: {
           organizationId: context.organizationId,
           userId: context.userId,
+          reconciliationRunId: run.id,
           reconciliationMatchId: match.id,
           bankTransactionId: input.bankTransactionId,
           ledgerTransactionId: input.ledgerTransactionId,
@@ -499,7 +466,7 @@ export async function removeManualMatch(
 
     const run = await tx.reconciliationRun.findUnique({
       where: { id: match.reconciliationRunId },
-      select: { id: true, status: true },
+      select: { id: true, organizationId: true, status: true, bankAccountId: true, periodStart: true, periodEnd: true },
     });
     await assertRunEditable(tx, run, context.organizationId);
 
@@ -594,9 +561,13 @@ export async function correctManualMatch(
 
     const run = await tx.reconciliationRun.findUnique({
       where: { id: match.reconciliationRunId },
-      select: { id: true, status: true },
+      select: { id: true, organizationId: true, status: true, bankAccountId: true, periodStart: true, periodEnd: true },
     });
     await assertRunEditable(tx, run, context.organizationId);
+
+    if (!run) {
+      throw new ManualMatchError("Reconciliation run for this match was not found.", "SERVER");
+    }
 
     const replacementTransactions = await tx.transaction.findMany({
       where: { id: { in: [replacementTransactionId] } },
@@ -606,6 +577,7 @@ export async function correctManualMatch(
         sourceType: true,
         status: true,
         transactionDate: true,
+        bankAccountId: true,
       },
     });
     const replacementTransaction = transactionById(replacementTransactions, replacementTransactionId);
@@ -614,6 +586,7 @@ export async function correctManualMatch(
       replacementTransactionId,
       context.organizationId,
       replacingBank ? SourceType.BANK : SourceType.LEDGER,
+      run,
     );
 
     const correctionAt = new Date();
@@ -735,7 +708,7 @@ export async function rejectManualMatch(
 
     const run = await tx.reconciliationRun.findUnique({
       where: { id: match.reconciliationRunId },
-      select: { id: true, status: true },
+      select: { id: true, organizationId: true, status: true, bankAccountId: true, periodStart: true, periodEnd: true },
     });
     await assertRunEditable(tx, run, context.organizationId);
 

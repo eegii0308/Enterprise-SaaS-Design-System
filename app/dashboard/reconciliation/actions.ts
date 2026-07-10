@@ -9,6 +9,7 @@ import {
   ManualMatchError,
 } from "@/lib/reconciliation/manual-match";
 import {
+  createReconciliationRun,
   submitReconciliationRunForReview,
   approveReconciliationRun,
   reopenReconciliationRun,
@@ -56,7 +57,43 @@ type ExceptionMarkingActionState =
       code: string;
     };
 
+export async function createReconciliationRunAction(input: {
+  bankAccountId: string;
+  periodStart: string;
+  periodEnd: string;
+  name: string;
+}): Promise<RunLifecycleActionState> {
+  const session = await requirePermission("reconciliation.run");
+
+  try {
+    const periodStart = new Date(`${input.periodStart}T00:00:00.000`);
+    const periodEnd = new Date(`${input.periodEnd}T23:59:59.999`);
+
+    const run = await createReconciliationRun(
+      { bankAccountId: input.bankAccountId, periodStart, periodEnd, name: input.name },
+      { organizationId: session.organizationId, userId: session.userId },
+    );
+
+    return {
+      ok: true,
+      message: "Reconciliation run created.",
+      reconciliationRunId: run.reconciliationRunId,
+    };
+  } catch (error) {
+    if (error instanceof RunLifecycleError) {
+      return { ok: false, message: error.message, code: error.code };
+    }
+
+    return {
+      ok: false,
+      message: "Reconciliation run could not be created.",
+      code: "SERVER",
+    };
+  }
+}
+
 export async function manuallyMatchTransactionsAction(input: {
+  reconciliationRunId: string;
   bankTransactionId: string;
   ledgerTransactionId: string;
 }): Promise<ManualMatchActionState> {

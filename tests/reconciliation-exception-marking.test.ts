@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SourceType, TransactionStatus } from "@prisma/client";
+import { ReconciliationRunStatus, SourceType, TransactionStatus } from "@prisma/client";
 import {
   markTransactionException,
   clearTransactionException,
@@ -327,7 +327,14 @@ test("clearTransactionException fails when a concurrent clear wins the CAS race"
 // ---- Cross-domain guard ----
 
 function createManualMatchDatabase(
-  transactions: { id: string; organizationId: string; sourceType: SourceType; status: TransactionStatus; transactionDate: Date }[],
+  transactions: {
+    id: string;
+    organizationId: string;
+    sourceType: SourceType;
+    status: TransactionStatus;
+    transactionDate: Date;
+    bankAccountId: string | null;
+  }[],
 ): ManualMatchDatabase {
   return {
     async $transaction(callback) {
@@ -361,17 +368,18 @@ function createManualMatchDatabase(
           },
         },
         reconciliationRun: {
-          async findFirst() {
-            return null;
-          },
           async findUnique() {
-            return null;
-          },
-          async create() {
-            return { id: "run-created" };
+            return {
+              id: "run-1",
+              organizationId: "org-1",
+              status: ReconciliationRunStatus.IN_PROGRESS,
+              bankAccountId: "account-1",
+              periodStart: new Date("2026-01-01T00:00:00.000Z"),
+              periodEnd: new Date("2026-12-31T23:59:59.999Z"),
+            };
           },
           async updateMany() {
-            return { count: 0 };
+            return { count: 1 };
           },
         },
         auditLog: {
@@ -385,14 +393,28 @@ function createManualMatchDatabase(
 }
 
 test("an EXCEPTION-status transaction cannot be manually matched", async () => {
-  const now = new Date();
+  const now = new Date("2026-06-15T00:00:00.000Z");
   const db = createManualMatchDatabase([
-    { id: "bank-1", organizationId: "org-1", sourceType: SourceType.BANK, status: TransactionStatus.EXCEPTION, transactionDate: now },
-    { id: "ledger-1", organizationId: "org-1", sourceType: SourceType.LEDGER, status: TransactionStatus.UNMATCHED, transactionDate: now },
+    {
+      id: "bank-1",
+      organizationId: "org-1",
+      sourceType: SourceType.BANK,
+      status: TransactionStatus.EXCEPTION,
+      transactionDate: now,
+      bankAccountId: "account-1",
+    },
+    {
+      id: "ledger-1",
+      organizationId: "org-1",
+      sourceType: SourceType.LEDGER,
+      status: TransactionStatus.UNMATCHED,
+      transactionDate: now,
+      bankAccountId: null,
+    },
   ]);
 
   await assert.rejects(
-    manuallyMatchTransactions({ bankTransactionId: "bank-1", ledgerTransactionId: "ledger-1" }, context, db),
+    manuallyMatchTransactions({ reconciliationRunId: "run-1", bankTransactionId: "bank-1", ledgerTransactionId: "ledger-1" }, context, db),
     (error) => error instanceof ManualMatchError && error.code === "CONFLICT",
   );
 });

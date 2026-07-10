@@ -14,6 +14,7 @@ type MockTransaction = {
   sourceType: SourceType;
   status: TransactionStatus;
   transactionDate: Date;
+  bankAccountId: string | null;
 };
 
 type MockMatchRecord = {
@@ -25,7 +26,14 @@ type MockMatchRecord = {
   reconciliationRunId: string;
 };
 
-type MockRunRecord = { id: string; status: ReconciliationRunStatus };
+type MockRunRecord = {
+  id: string;
+  organizationId: string;
+  status: ReconciliationRunStatus;
+  bankAccountId: string;
+  periodStart: Date;
+  periodEnd: Date;
+};
 
 type MockState = {
   transactions: MockTransaction[];
@@ -55,6 +63,7 @@ function replacementBank(overrides: Partial<MockTransaction> = {}): MockTransact
     sourceType: SourceType.BANK,
     status: TransactionStatus.UNMATCHED,
     transactionDate: new Date("2026-02-01T00:00:00.000Z"),
+    bankAccountId: "account-1",
     ...overrides,
   };
 }
@@ -66,6 +75,7 @@ function replacementLedger(overrides: Partial<MockTransaction> = {}): MockTransa
     sourceType: SourceType.LEDGER,
     status: TransactionStatus.UNMATCHED,
     transactionDate: new Date("2026-02-02T00:00:00.000Z"),
+    bankAccountId: null,
     ...overrides,
   };
 }
@@ -82,11 +92,23 @@ function confirmedMatch(overrides: Partial<MockMatchRecord> = {}): MockMatchReco
   };
 }
 
+function mockRun(overrides: Partial<MockRunRecord> = {}): MockRunRecord {
+  return {
+    id: "run-1",
+    organizationId: "org-1",
+    status: ReconciliationRunStatus.IN_PROGRESS,
+    bankAccountId: "account-1",
+    periodStart: new Date("2026-02-01T00:00:00.000Z"),
+    periodEnd: new Date("2026-02-28T23:59:59.999Z"),
+    ...overrides,
+  };
+}
+
 function createDatabase(state: Partial<MockState> = {}): ManualMatchDatabase & { state: MockState } {
   const fullState: MockState = {
     transactions: [replacementBank(), replacementLedger()],
     matchRecord: confirmedMatch(),
-    matchParentRun: { id: "run-1", status: ReconciliationRunStatus.IN_PROGRESS },
+    matchParentRun: mockRun(),
     createdMatches: [],
     releaseUpdates: [],
     matchRemovalCalls: [],
@@ -133,14 +155,8 @@ function createDatabase(state: Partial<MockState> = {}): ManualMatchDatabase & {
           },
         },
         reconciliationRun: {
-          async findFirst() {
-            return null;
-          },
           async findUnique() {
             return fullState.matchParentRun ?? null;
-          },
-          async create() {
-            return { id: "run-created" };
           },
           async updateMany(args) {
             fullState.runLockCalls.push(args);
@@ -286,6 +302,7 @@ test("correctManualMatch rejects replacing a side with the transaction already m
         sourceType: SourceType.BANK,
         status: TransactionStatus.MATCHED,
         transactionDate: new Date("2026-01-02T00:00:00.000Z"),
+        bankAccountId: "account-1",
       },
       replacementLedger(),
     ],
@@ -343,7 +360,7 @@ test("correctManualMatch rejects a match that is not confirmed", async () => {
 
 // 9. Locked run READY_FOR_REVIEW
 test("correctManualMatch rejects correction when the parent run is ready for review", async () => {
-  const db = createDatabase({ matchParentRun: { id: "run-1", status: ReconciliationRunStatus.READY_FOR_REVIEW } });
+  const db = createDatabase({ matchParentRun: mockRun({ status: ReconciliationRunStatus.READY_FOR_REVIEW }) });
 
   await assert.rejects(
     correctManualMatch(bankCorrectionInput, context, db),
@@ -354,7 +371,7 @@ test("correctManualMatch rejects correction when the parent run is ready for rev
 
 // 10. Locked run APPROVED
 test("correctManualMatch rejects correction when the parent run is approved", async () => {
-  const db = createDatabase({ matchParentRun: { id: "run-1", status: ReconciliationRunStatus.APPROVED } });
+  const db = createDatabase({ matchParentRun: mockRun({ status: ReconciliationRunStatus.APPROVED }) });
 
   await assert.rejects(
     correctManualMatch(bankCorrectionInput, context, db),
@@ -381,10 +398,47 @@ test("correctManualMatch fails when a concurrent submit wins the run-lock race",
   assert.equal(db.state.createdMatches.length, 0);
 });
 
+// 10c. Missing parent run (defensive)
+test("correctManualMatch fails safely if the match's parent run cannot be found", async () => {
+  const db = createDatabase({ matchParentRun: null });
+
+  await assert.rejects(
+    correctManualMatch(bankCorrectionInput, context, db),
+    (error) => error instanceof ManualMatchError && error.code === "SERVER",
+  );
+  assert.equal(db.state.matchRemovalCalls.length, 0);
+});
+
 // 11. Replacement transaction invalid
 test("correctManualMatch rejects a replacement transaction with the wrong source type", async () => {
   const db = createDatabase({
     transactions: [replacementBank({ sourceType: SourceType.LEDGER }), replacementLedger()],
+  });
+
+  await assert.rejects(
+    correctManualMatch(bankCorrectionInput, context, db),
+    (error) => error instanceof ManualMatchError && error.code === "VALIDATION",
+  );
+  assert.equal(db.state.matchRemovalCalls.length, 0);
+});
+
+// 11b. Replacement bank transaction on the wrong bank account
+test("correctManualMatch rejects a replacement bank transaction that does not belong to the run's bank account", async () => {
+  const db = createDatabase({
+    transactions: [replacementBank({ bankAccountId: "account-2" }), replacementLedger()],
+  });
+
+  await assert.rejects(
+    correctManualMatch(bankCorrectionInput, context, db),
+    (error) => error instanceof ManualMatchError && error.code === "VALIDATION",
+  );
+  assert.equal(db.state.matchRemovalCalls.length, 0);
+});
+
+// 11c. Replacement transaction outside the run's period
+test("correctManualMatch rejects a replacement transaction dated outside the run's period", async () => {
+  const db = createDatabase({
+    transactions: [replacementBank({ transactionDate: new Date("2026-03-01T00:00:00.000Z") }), replacementLedger()],
   });
 
   await assert.rejects(

@@ -17,7 +17,14 @@ type MockMatchRecord = {
   reconciliationRunId: string;
 };
 
-type MockRunRecord = { id: string; status: ReconciliationRunStatus };
+type MockRunRecord = {
+  id: string;
+  organizationId: string;
+  status: ReconciliationRunStatus;
+  bankAccountId: string;
+  periodStart: Date;
+  periodEnd: Date;
+};
 
 type MockState = {
   matchRecord?: MockMatchRecord | null;
@@ -47,10 +54,22 @@ function confirmedMatch(overrides: Partial<MockMatchRecord> = {}): MockMatchReco
   };
 }
 
+function mockRun(overrides: Partial<MockRunRecord> = {}): MockRunRecord {
+  return {
+    id: "run-1",
+    organizationId: "org-1",
+    status: ReconciliationRunStatus.IN_PROGRESS,
+    bankAccountId: "account-1",
+    periodStart: new Date("2026-01-01T00:00:00.000Z"),
+    periodEnd: new Date("2026-01-31T23:59:59.999Z"),
+    ...overrides,
+  };
+}
+
 function createDatabase(state: Partial<MockState> = {}): ManualMatchDatabase & { state: MockState } {
   const fullState: MockState = {
     matchRecord: confirmedMatch(),
-    matchParentRun: { id: "run-1", status: ReconciliationRunStatus.IN_PROGRESS },
+    matchParentRun: mockRun(),
     updates: [],
     matchUpdates: [],
     auditLogs: [],
@@ -93,14 +112,8 @@ function createDatabase(state: Partial<MockState> = {}): ManualMatchDatabase & {
           },
         },
         reconciliationRun: {
-          async findFirst() {
-            return null;
-          },
           async findUnique() {
             return fullState.matchParentRun ?? null;
-          },
-          async create() {
-            return { id: "run-created" };
           },
           async updateMany(args) {
             fullState.runLockCalls.push(args);
@@ -287,7 +300,7 @@ test("rejectManualMatch rejects an already-rejected match", async () => {
 // ---- Run locking ----
 
 test("rejectManualMatch rejects rejection when the parent run is ready for review", async () => {
-  const db = createDatabase({ matchParentRun: { id: "run-1", status: ReconciliationRunStatus.READY_FOR_REVIEW } });
+  const db = createDatabase({ matchParentRun: mockRun({ status: ReconciliationRunStatus.READY_FOR_REVIEW }) });
 
   await assert.rejects(
     rejectManualMatch(rejectInput, context, db),
@@ -298,7 +311,7 @@ test("rejectManualMatch rejects rejection when the parent run is ready for revie
 });
 
 test("rejectManualMatch rejects rejection when the parent run is approved", async () => {
-  const db = createDatabase({ matchParentRun: { id: "run-1", status: ReconciliationRunStatus.APPROVED } });
+  const db = createDatabase({ matchParentRun: mockRun({ status: ReconciliationRunStatus.APPROVED }) });
 
   await assert.rejects(
     rejectManualMatch(rejectInput, context, db),

@@ -10,6 +10,7 @@ import {
   Link2,
   Loader2,
   PencilLine,
+  Plus,
   RotateCcw,
   Send,
   ShieldCheck,
@@ -22,6 +23,7 @@ import {
   removeManualMatchAction,
   correctManualMatchAction,
   rejectManualMatchAction,
+  createReconciliationRunAction,
   submitReconciliationRunForReviewAction,
   approveReconciliationRunAction,
   reopenReconciliationRunAction,
@@ -72,7 +74,15 @@ function useManualMatchContext() {
 
 type SubmitResult = { status: "idle" } | { status: "success"; message: string } | { status: "error"; message: string };
 
-export function ManualMatchProvider({ children, locked = false }: { children: ReactNode; locked?: boolean }) {
+export function ManualMatchProvider({
+  children,
+  reconciliationRunId,
+  locked = false,
+}: {
+  children: ReactNode;
+  reconciliationRunId: string;
+  locked?: boolean;
+}) {
   const router = useRouter();
   const [selection, setSelection] = useState<SelectionState>({ bankTransactionId: null, ledgerTransactionId: null });
   const [result, setResult] = useState<SubmitResult>({ status: "idle" });
@@ -98,7 +108,7 @@ export function ManualMatchProvider({ children, locked = false }: { children: Re
     const ledgerTransactionId = selection.ledgerTransactionId;
 
     startTransition(async () => {
-      const response = await manuallyMatchTransactionsAction({ bankTransactionId, ledgerTransactionId });
+      const response = await manuallyMatchTransactionsAction({ reconciliationRunId, bankTransactionId, ledgerTransactionId });
 
       if (response.ok) {
         setResult({ status: "success", message: response.message });
@@ -640,6 +650,96 @@ export function ReopenRunButton({ reconciliationRunId }: { reconciliationRunId: 
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
+}
+
+export function CreateRunForm({
+  bankAccounts,
+}: {
+  bankAccounts: { id: string; name: string; bankName: string; maskedAccountNumber: string }[];
+}) {
+  const router = useRouter();
+  const [bankAccountId, setBankAccountId] = useState("");
+  const [periodStart, setPeriodStart] = useState("");
+  const [periodEnd, setPeriodEnd] = useState("");
+  const [name, setName] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  const canSubmit = bankAccountId !== "" && periodStart !== "" && periodEnd !== "" && name.trim().length > 0 && !isPending;
+
+  function handleSubmit() {
+    if (!canSubmit) {
+      return;
+    }
+
+    startTransition(async () => {
+      const response = await createReconciliationRunAction({ bankAccountId, periodStart, periodEnd, name });
+
+      if (response.ok) {
+        router.push(`/dashboard/reconciliation?runId=${response.reconciliationRunId}`);
+      } else {
+        setFormError(response.message);
+      }
+    });
+  }
+
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-[repeat(4,minmax(160px,1fr))_auto] xl:items-end">
+      <label className="flex flex-col gap-1">
+        <span className="text-xs font-semibold text-slate-600">Bank account</span>
+        <select
+          value={bankAccountId}
+          onChange={(event) => setBankAccountId(event.target.value)}
+          className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950"
+        >
+          <option value="">Select a bank account</option>
+          {bankAccounts.map((bankAccount) => (
+            <option key={bankAccount.id} value={bankAccount.id}>
+              {bankAccount.name} · {bankAccount.bankName} ({bankAccount.maskedAccountNumber})
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="flex flex-col gap-1">
+        <span className="text-xs font-semibold text-slate-600">Run name</span>
+        <input
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="e.g. June 2026 operating account"
+          className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 placeholder:text-slate-400"
+        />
+      </label>
+
+      <label className="flex flex-col gap-1">
+        <span className="text-xs font-semibold text-slate-600">Period start</span>
+        <input
+          type="date"
+          value={periodStart}
+          onChange={(event) => setPeriodStart(event.target.value)}
+          className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950"
+        />
+      </label>
+
+      <label className="flex flex-col gap-1">
+        <span className="text-xs font-semibold text-slate-600">Period end</span>
+        <input
+          type="date"
+          value={periodEnd}
+          onChange={(event) => setPeriodEnd(event.target.value)}
+          className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950"
+        />
+      </label>
+
+      <div className="flex flex-col gap-1">
+        <Button type="button" onClick={handleSubmit} disabled={!canSubmit} className="h-10 gap-2">
+          {isPending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Plus size={16} aria-hidden="true" />}
+          Create run
+        </Button>
+        {formError ? <p className="text-xs text-red-700">{formError}</p> : null}
+      </div>
+    </div>
   );
 }
 

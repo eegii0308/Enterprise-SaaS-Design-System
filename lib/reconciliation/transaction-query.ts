@@ -2,6 +2,12 @@ import { Prisma, SourceType, TransactionStatus } from "@prisma/client";
 
 export type ReconciliationSearchParams = Record<string, string | string[] | undefined>;
 
+export type ReconciliationRunScope = {
+  bankAccountId: string;
+  periodStart: Date;
+  periodEnd: Date;
+};
+
 export function firstParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
@@ -38,7 +44,20 @@ function parseAmount(value: string | undefined) {
   return Number.isFinite(amount) ? new Prisma.Decimal(normalizedValue) : undefined;
 }
 
-export function buildReconciliationTransactionQuery(searchParams: ReconciliationSearchParams, organizationId: string) {
+// Narrows a user-supplied date filter to fall within the run's own period,
+// so the date range filters in the workspace form can only narrow the run's
+// scope, never widen it beyond the selected run's reconciliation period.
+function intersectWithRunPeriod(run: ReconciliationRunScope, userFrom: Date | undefined, userTo: Date | undefined) {
+  const gte = userFrom && userFrom.getTime() > run.periodStart.getTime() ? userFrom : run.periodStart;
+  const lte = userTo && userTo.getTime() < run.periodEnd.getTime() ? userTo : run.periodEnd;
+  return { gte, lte };
+}
+
+export function buildReconciliationTransactionQuery(
+  searchParams: ReconciliationSearchParams,
+  organizationId: string,
+  run: ReconciliationRunScope,
+) {
   const sourceType = enumValue(SourceType, firstParam(searchParams.sourceType));
   const dateFrom = firstParam(searchParams.dateFrom);
   const dateTo = firstParam(searchParams.dateTo);
@@ -47,23 +66,15 @@ export function buildReconciliationTransactionQuery(searchParams: Reconciliation
   const ledgerPage = parsePage(firstParam(searchParams.ledgerPage));
   const amount = parseAmount(amountValue);
 
-  const transactionDate: Prisma.DateTimeFilter = {};
   const parsedDateFrom = parseDate(dateFrom);
   const parsedDateTo = parseDate(dateTo, true);
-
-  if (parsedDateFrom) {
-    transactionDate.gte = parsedDateFrom;
-  }
-
-  if (parsedDateTo) {
-    transactionDate.lte = parsedDateTo;
-  }
+  const transactionDate = intersectWithRunPeriod(run, parsedDateFrom, parsedDateTo);
 
   const baseWhere: Prisma.TransactionWhereInput = {
     organizationId,
     status: TransactionStatus.UNMATCHED,
+    transactionDate,
     ...(amount ? { amount } : {}),
-    ...(parsedDateFrom || parsedDateTo ? { transactionDate } : {}),
   };
 
   return {
@@ -73,7 +84,11 @@ export function buildReconciliationTransactionQuery(searchParams: Reconciliation
     amountValue,
     bankPage,
     ledgerPage,
-    bankWhere: { ...baseWhere, sourceType: SourceType.BANK } satisfies Prisma.TransactionWhereInput,
+    bankWhere: {
+      ...baseWhere,
+      sourceType: SourceType.BANK,
+      bankAccountId: run.bankAccountId,
+    } satisfies Prisma.TransactionWhereInput,
     ledgerWhere: { ...baseWhere, sourceType: SourceType.LEDGER } satisfies Prisma.TransactionWhereInput,
     shouldShowBank: !sourceType || sourceType === SourceType.BANK,
     shouldShowLedger: !sourceType || sourceType === SourceType.LEDGER,
