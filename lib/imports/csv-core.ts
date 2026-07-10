@@ -21,6 +21,7 @@ export type PreparedImportRow = {
   rowHash: string;
   validationStatus: ImportRowStatus;
   errorMessages: string[] | null;
+  searchText: string;
 };
 
 export type PreparedImport = {
@@ -148,6 +149,18 @@ function getMappedValue(record: CsvRecord, mapping: ColumnMapping, field: keyof 
   return column ? record[column] : undefined;
 }
 
+// CSV column headers vary per uploaded file, so there is no fixed set of
+// "known" fields to search within rawData. Flattening every raw value (plus
+// any error messages) into one plain-text column lets the import results
+// viewer search with a simple `contains`/`mode: "insensitive"` filter,
+// matching the pattern already used for Transaction.description elsewhere in
+// this app, instead of relying on Prisma's typed Json filters (which require
+// a fixed `path` and cannot search "any key" on Postgres).
+export function buildImportRowSearchText(rawData: CsvRecord, errorMessages: string[] | null): string {
+  const values = Object.values(rawData).filter((value) => value.length > 0);
+  return [...values, ...(errorMessages ?? [])].join(" ");
+}
+
 export function prepareImportRows(csvText: string, sourceType: SourceType, importBatchId: string): PreparedImport {
   const { headers, records } = parseCsv(csvText);
   const columnMapping = detectColumnMapping(headers);
@@ -209,13 +222,16 @@ export function prepareImportRows(csvText: string, sourceType: SourceType, impor
       invalidRows += 1;
     }
 
+    const errorMessages = errors.length > 0 ? errors : null;
+
     return {
       rowNumber: index + 2,
       rawData: record,
       normalizedData,
       rowHash,
       validationStatus,
-      errorMessages: errors.length > 0 ? errors : null,
+      errorMessages,
+      searchText: buildImportRowSearchText(record, errorMessages),
     };
   });
 

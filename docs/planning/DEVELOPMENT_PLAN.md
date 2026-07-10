@@ -19,7 +19,7 @@ The current Vite React prototype is a workflow and visual reference. Production 
 
 ## Development Phases
 
-Note on phase naming: commit history and prior review notes sometimes refer to sub-increments informally (for example "Phase 5D" for an import-related migration fix, or "Phase 6A"/"Phase 6B"/"Phase 6C"/"Phase 6C.1"/"Phase 6D" for reconciliation workspace, manual matching, run lifecycle, match correction, run reopening, and concurrency hardening work, and "Phase 7A"/"Phase 7B"/"Phase 7C"/"Phase 7D" for financial tie-out, explicit run creation, approval controls, and bank account management). Those informal labels are sub-slices of the numbered phases below — "Phase 6A" through "Phase 6D" and "Phase 7A"/"7B"/"7C"/"7D" work all maps to Phase 4 (Manual Reconciliation) here, not to the numbered "Phase 7: Matching Rules" later in this document. This document's phase numbers are the source of truth for scope; treat informal commit-message phase labels as sequencing notes only.
+Note on phase naming: commit history and prior review notes sometimes refer to sub-increments informally (for example "Phase 5D" for an import-related migration fix, "Phase 6A"/"Phase 6B"/"Phase 6C"/"Phase 6C.1"/"Phase 6D" for reconciliation workspace, manual matching, run lifecycle, match correction, run reopening, and concurrency hardening work, "Phase 7A"/"Phase 7B"/"Phase 7C"/"Phase 7D" for financial tie-out, explicit run creation, approval controls, and bank account management, and "Phase 8A" for the import results & error viewer). Those informal labels are sub-slices of the numbered phases below — "Phase 6A" through "Phase 6D" and "Phase 7A"/"7B"/"7C"/"7D" map to Phase 4 (Manual Reconciliation), and "Phase 8A" maps to Phase 2 (Import Engine) — not to the numbered "Phase 7: Matching Rules" or "Phase 8: Admin Settings Polish" later in this document. This document's phase numbers are the source of truth for scope; treat informal commit-message phase labels as sequencing notes only.
 
 ### Phase 0: Foundation
 
@@ -88,18 +88,22 @@ Deployment milestone:
 
 Purpose: create reliable financial data intake before building reconciliation workflows.
 
+Status: CSV upload, batch/row storage, validation, duplicate detection, and normalization into transactions are implemented and run synchronously on upload (`lib/imports/csv-core.ts`, `lib/imports/processor.ts`, `app/dashboard/imports/actions.ts`). XLSX upload is not implemented — only CSV is accepted. Column mapping is auto-detected (`detectColumnMapping`) and stored on the batch, but there is no separate user-facing mapping-confirmation step before processing.
+
+Phase 8A (import results & error viewer): a new `/dashboard/imports/[importBatchId]` page shows each batch's summary (total processed, imported, rejected, duplicate) and a paginated, filterable, searchable table of every row, reusing the validation results already stored by the processor (row number, status, error messages, raw values) rather than re-parsing or re-validating the CSV. See `tests/import-row-query.test.ts` and the `buildImportRowSearchText` tests in `tests/import-csv-core.test.ts`.
+
 Tasks:
 
-- Implement tenant-scoped file upload for CSV and XLSX.
-- Create import batches with status tracking.
-- Store import rows with raw data, normalized data, validation status, and error messages.
-- Add source type selection: bank or ledger.
-- Add column mapping confirmation.
-- Validate required fields: transaction date, description, amount or debit/credit, currency, and source type.
-- Normalize valid rows into transactions.
-- Detect duplicate files and duplicate rows with fingerprints.
-- Document and enforce file size and row limits.
-- Show import history, row counts, duplicate rows, invalid rows, and processing failures.
+- [x] Implement tenant-scoped file upload for CSV (XLSX is not yet supported).
+- [x] Create import batches with status tracking.
+- [x] Store import rows with raw data, normalized data, validation status, and error messages.
+- [x] Add source type selection: bank or ledger.
+- [ ] Add column mapping confirmation (mapping is auto-detected and stored, but not presented to the user for confirmation before processing).
+- [x] Validate required fields: transaction date, description, and amount or debit/credit (currency defaults to the organization's default currency rather than being a hard requirement).
+- [x] Normalize valid rows into transactions.
+- [x] Detect duplicate files (`ImportBatch` unique file hash per organization) and duplicate rows (fingerprint-based, within a batch and against existing transactions).
+- [ ] Document and enforce file size and row limits (a 20 MB file size cap is enforced; there is no row-count limit yet).
+- [x] Show import history, row counts, duplicate rows, invalid rows, and processing failures (Phase 8A: the batch list page's inline summary and the new per-batch results viewer).
 
 Dependencies:
 

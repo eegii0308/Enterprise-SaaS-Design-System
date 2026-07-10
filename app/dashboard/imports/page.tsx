@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { ImportStatus } from "@prisma/client";
 import { FileSpreadsheet, Upload } from "lucide-react";
 import { prisma } from "@/lib/db/client";
@@ -49,6 +50,10 @@ export default async function ImportsPage() {
       fileHash: true,
       sourceType: true,
       status: true,
+      totalRows: true,
+      validRows: true,
+      errorRows: true,
+      duplicateRows: true,
       createdAt: true,
       createdBy: true,
     },
@@ -59,7 +64,8 @@ export default async function ImportsPage() {
       <div className="flex flex-col gap-1">
         <h1 className="text-xl font-bold text-slate-900">Imports</h1>
         <p className="text-sm text-slate-500">
-          Upload CSV files for {session.organizationName}. New batches remain pending until a later processing phase.
+          Upload CSV files for {session.organizationName}. Each batch is validated and processed immediately; open a batch
+          below to review its results.
         </p>
       </div>
 
@@ -75,7 +81,11 @@ export default async function ImportsPage() {
           <div className="divide-y divide-slate-100">
             {importBatches.length > 0 ? (
               importBatches.map((importBatch) => (
-                <article key={importBatch.id} className="grid gap-3 p-4 lg:grid-cols-[1fr_auto] lg:items-center">
+                <Link
+                  key={importBatch.id}
+                  href={`/dashboard/imports/${importBatch.id}`}
+                  className="grid gap-3 p-4 transition-colors hover:bg-slate-50 lg:grid-cols-[1fr_auto] lg:items-center"
+                >
                   <div className="min-w-0">
                     <div className="flex min-w-0 items-center gap-2">
                       <FileSpreadsheet size={16} className="shrink-0 text-slate-500" aria-hidden="true" />
@@ -84,12 +94,16 @@ export default async function ImportsPage() {
                     <p className="mt-1 text-xs text-slate-500">
                       {formatStatus(importBatch.status)} - {importBatch.sourceType.toLowerCase()} - {formatBytes(importBatch.fileSize)} - hash {importBatch.fileHash.slice(0, 12)}
                     </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {importBatch.totalRows.toLocaleString("en")} rows · {importBatch.validRows.toLocaleString("en")} imported ·{" "}
+                      {importBatch.errorRows.toLocaleString("en")} rejected · {importBatch.duplicateRows.toLocaleString("en")} duplicate
+                    </p>
                   </div>
                   <div className="text-left lg:text-right">
                     <p className="text-xs font-semibold text-slate-700">{formatDate(importBatch.createdAt)}</p>
                     <p className="mt-1 text-xs text-slate-500">Created by {importBatch.createdBy}</p>
                   </div>
-                </article>
+                </Link>
               ))
             ) : (
               <p className="p-4 text-sm text-slate-500">No import batches have been uploaded for this organization yet.</p>

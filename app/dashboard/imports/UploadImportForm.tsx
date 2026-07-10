@@ -17,7 +17,7 @@ export function UploadImportForm() {
     <form action={formAction} className="space-y-5 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
       <div>
         <h2 className="text-base font-bold text-slate-950">Upload CSV</h2>
-        <p className="mt-1 text-sm text-slate-500">Create an import batch for later processing.</p>
+        <p className="mt-1 text-sm text-slate-500">The file is validated and processed immediately after upload.</p>
       </div>
 
       <fieldset className="space-y-3">

@@ -172,6 +172,14 @@ model ImportRow {
   rowHash              String          @map("row_hash")
   validationStatus     ImportRowStatus @default(PENDING) @map("validation_status")
   errorMessages        Json?           @map("error_messages")
+  // Flattened, lowercase-insensitive-searchable text built from rawData's
+  // values and errorMessages (see buildImportRowSearchText in csv-core.ts).
+  // CSV column headers vary per uploaded file, so Prisma's typed Json filters
+  // (which require a fixed `path`) can't search "any key" in rawData; this
+  // plain-text column lets the results viewer use the same
+  // `contains`/`mode: "insensitive"` search pattern already used elsewhere
+  // (e.g. Transaction.description on the transactions page).
+  searchText           String          @default("") @map("search_text")
   createdTransactionId String?         @unique @map("created_transaction_id")
   createdAt            DateTime        @default(now()) @map("created_at")
   createdTransaction   Transaction?    @relation("CreatedTransaction", fields: [createdTransactionId], references: [id])

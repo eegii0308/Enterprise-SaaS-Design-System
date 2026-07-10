@@ -35,14 +35,14 @@ The product should first become a working reconciliation SaaS, not a complete en
 
 ## Phase 3: Imports
 
-- Implement CSV/XLSX upload.
-- Add import batch tracking.
-- Add mapping confirmation.
-- Add row-level validation errors.
-- Add duplicate detection and idempotency checks.
-- Add documented file size and row limits.
-- Add import history.
-- Normalize bank and ledger rows into the transaction model.
+- Implement CSV/XLSX upload. (partially done — CSV upload is implemented; XLSX is not yet supported)
+- Add import batch tracking. (done)
+- Add mapping confirmation. (partially done — column mapping is auto-detected and stored, but not presented to the user for confirmation before processing)
+- Add row-level validation errors. (done — stored on `ImportRow` and surfaced in the Phase 8A results viewer at `/dashboard/imports/[importBatchId]` with row number, reason, and source values)
+- Add duplicate detection and idempotency checks. (done — duplicate file hashes and duplicate/fingerprint-matching rows are both detected)
+- Add documented file size and row limits. (partially done — a 20 MB file size cap is enforced; there is no row-count limit yet)
+- Add import history. (done — the imports list page plus the Phase 8A per-batch results viewer with pagination, status filtering, and search)
+- Normalize bank and ledger rows into the transaction model. (done)
 
 ## Phase 4: Reconciliation
 

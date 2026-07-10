@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { ImportRowStatus, ImportStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
-import { prepareImportRows } from "@/lib/imports/csv-core";
+import { buildImportRowSearchText, prepareImportRows } from "@/lib/imports/csv-core";
 import { didAcquireProcessingLock, getCompletedImportStatus, getImportSummary, isCompletedImportStatus, shouldCreateAuditEvent } from "@/lib/imports/processor-core";
 import { getImportStoragePath } from "@/lib/imports/storage";
 
@@ -32,6 +32,12 @@ function getTransactionFingerprint(normalizedData: NormalizedTransactionData) {
       reference: normalizedData.reference,
     }))
     .digest("hex");
+}
+
+// rawData is always created as a flat string record by prepareImportRows
+// (csv-core.ts); this only re-widens the type Prisma returns it as.
+function toCsvRecord(value: Prisma.JsonValue): Record<string, string> {
+  return (value && typeof value === "object" && !Array.isArray(value) ? value : {}) as Record<string, string>;
 }
 
 function parseNormalizedTransactionData(value: Prisma.JsonValue): NormalizedTransactionData {
@@ -194,6 +200,7 @@ export async function processImportBatch(importBatchId: string, session: ImportP
             rowHash: row.rowHash,
             validationStatus: row.validationStatus,
             errorMessages: row.errorMessages ?? Prisma.JsonNull,
+            searchText: row.searchText,
           })),
         });
       }
@@ -208,12 +215,17 @@ export async function processImportBatch(importBatchId: string, session: ImportP
       },
       select: {
         id: true,
+        rawData: true,
         normalizedData: true,
       },
       orderBy: { rowNumber: "asc" },
     });
 
     for (const row of validRows) {
+      const rawData = toCsvRecord(row.rawData);
+      const duplicateErrorMessages = ["Transaction already exists for this organization."];
+      const duplicateSearchText = buildImportRowSearchText(rawData, duplicateErrorMessages);
+
       try {
         await prisma.$transaction(async (tx) => {
           const normalizedData = parseNormalizedTransactionData(row.normalizedData);
@@ -233,7 +245,8 @@ export async function processImportBatch(importBatchId: string, session: ImportP
               where: { id: row.id },
               data: {
                 validationStatus: ImportRowStatus.DUPLICATE,
-                errorMessages: ["Transaction already exists for this organization."],
+                errorMessages: duplicateErrorMessages,
+                searchText: duplicateSearchText,
               },
             });
 
@@ -272,18 +285,22 @@ export async function processImportBatch(importBatchId: string, session: ImportP
             where: { id: row.id },
             data: {
               validationStatus: ImportRowStatus.DUPLICATE,
-              errorMessages: ["Transaction already exists for this organization."],
+              errorMessages: duplicateErrorMessages,
+              searchText: duplicateSearchText,
             },
           });
 
           continue;
         }
 
+        const failureErrorMessages = [error instanceof Error ? error.message : "Transaction creation failed."];
+
         await prisma.importRow.update({
           where: { id: row.id },
           data: {
             validationStatus: ImportRowStatus.INVALID,
-            errorMessages: [error instanceof Error ? error.message : "Transaction creation failed."],
+            errorMessages: failureErrorMessages,
+            searchText: buildImportRowSearchText(rawData, failureErrorMessages),
           },
         });
       }

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ImportRowStatus, SourceType } from "@prisma/client";
-import { detectColumnMapping, parseCsv, prepareImportRows } from "../lib/imports/csv-core.ts";
+import { buildImportRowSearchText, detectColumnMapping, parseCsv, prepareImportRows } from "../lib/imports/csv-core.ts";
 
 test("parseCsv handles quoted commas and detects import columns", () => {
   const parsed = parseCsv('Date,Description,Amount,Reference\n2026-01-02,"Bank fee, monthly",-12.50,FEE-1\n');
@@ -46,4 +46,36 @@ test("prepareImportRows validates rows and tracks valid invalid and duplicate co
     reference: "INV-1",
     vendor: "",
   });
+});
+
+test("prepareImportRows attaches a searchable searchText built from raw values and error messages to every row", () => {
+  const csv = [
+    "Transaction Date,Description,Debit,Credit,Currency,Reference",
+    "2026-01-02,Customer payment,,1000,MNT,INV-1",
+    "not-a-date,Missing date,,25,MNT,INV-2",
+  ].join("\n");
+
+  const prepared = prepareImportRows(csv, SourceType.BANK, "batch-1");
+
+  assert.match(prepared.rows[0].searchText, /Customer payment/);
+  assert.match(prepared.rows[0].searchText, /INV-1/);
+  assert.match(prepared.rows[1].searchText, /Missing date/);
+  assert.match(prepared.rows[1].searchText, /Transaction date is missing or invalid\./);
+});
+
+test("buildImportRowSearchText joins non-empty raw values and error messages, skipping empty fields", () => {
+  const searchText = buildImportRowSearchText(
+    { Date: "2026-01-02", Description: "ACME WIDGET CO", Reference: "" },
+    ["Amount, debit, or credit is required."],
+  );
+
+  assert.match(searchText, /ACME WIDGET CO/);
+  assert.match(searchText, /2026-01-02/);
+  assert.match(searchText, /Amount, debit, or credit is required\./);
+  assert.doesNotMatch(searchText, /Reference/);
+});
+
+test("buildImportRowSearchText handles no errors and empty raw data", () => {
+  assert.equal(buildImportRowSearchText({}, null), "");
+  assert.equal(buildImportRowSearchText({ Date: "2026-01-02" }, null), "2026-01-02");
 });
