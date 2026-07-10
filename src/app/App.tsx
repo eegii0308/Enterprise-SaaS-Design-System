@@ -696,7 +696,7 @@ function LoginScreen({ onNavigate }: { onNavigate: (v: View) => void }) {
           ))}
         </div>
         <p className="text-center text-sm text-slate-600 mt-2">
-          Don't have an account?{" "}
+          Don&apos;t have an account?{" "}
           <button onClick={() => onNavigate("register")} className="text-blue-600 font-medium hover:underline">Sign up free</button>
         </p>
       </div>
@@ -815,7 +815,7 @@ function ForgotPasswordScreen({ onNavigate }: { onNavigate: (v: View) => void })
             <p className="text-sm text-slate-600">We sent a password reset link to</p>
             <p className="text-sm font-semibold text-slate-900 mt-0.5">sarah.chen@acmecorp.com</p>
           </div>
-          <p className="text-xs text-slate-500">Didn't receive the email? Check spam or{" "}
+          <p className="text-xs text-slate-500">Didn&apos;t receive the email? Check spam or{" "}
             <button className="text-blue-600 hover:underline" onClick={() => setSent(false)}>try again</button>
           </p>
           <Btn variant="secondary" size="md" onClick={() => onNavigate("login")} className="w-full">
@@ -925,7 +925,7 @@ function OnboardingScreen({ onNavigate }: { onNavigate: (v: View) => void }) {
           <GitMerge size={36} className="text-white" />
         </div>
         <h2 className="text-2xl font-bold text-slate-900 mb-2">Welcome to E-Reconcile MN</h2>
-        <p className="text-slate-600 text-sm mb-6">Let's get your workspace set up. It takes about 5 minutes and you'll be reconciling smarter from day one.</p>
+        <p className="text-slate-600 text-sm mb-6">Let&apos;s get your workspace set up. It takes about 5 minutes and you&apos;ll be reconciling smarter from day one.</p>
         <div className="grid grid-cols-3 gap-3 text-center mb-6">
           {[
             { icon: <Zap size={16} />, label: "AI-Powered Matching" },
@@ -1114,8 +1114,8 @@ function OnboardingScreen({ onNavigate }: { onNavigate: (v: View) => void }) {
           <CheckCircle2 size={40} className="text-emerald-500" />
         </div>
         <div>
-          <h2 className="text-xl font-bold text-slate-900">You're all set!</h2>
-          <p className="text-sm text-slate-600 mt-1">Your workspace is ready. Let's start reconciling.</p>
+          <h2 className="text-xl font-bold text-slate-900">You&apos;re all set!</h2>
+          <p className="text-sm text-slate-600 mt-1">Your workspace is ready. Let&apos;s start reconciling.</p>
         </div>
         <div className="bg-slate-50 rounded-xl p-4 w-full text-left">
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Setup Summary</p>

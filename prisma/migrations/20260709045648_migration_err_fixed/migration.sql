@@ -1,7 +1,4 @@
 -- DropForeignKey
-ALTER TABLE "transactions" DROP CONSTRAINT "transactions_import_batch_id_fkey";
-
--- DropForeignKey
 ALTER TABLE "transactions" DROP CONSTRAINT "transactions_organization_id_import_batch_id_fkey";
 
 -- AddForeignKey

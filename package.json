@@ -8,12 +8,12 @@
     "dev": "next dev",
     "prototype:build": "vite build",
     "prototype:dev": "vite",
-    "lint": "next lint",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
-    "test": "node --test --experimental-strip-types tests/*.test.ts"
+    "test": "node --test --experimental-strip-types --import ./tests/register-aliases.mjs tests/*.test.ts"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
@@ -83,6 +83,8 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "4.7.0",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.10",
     "tailwindcss": "4.1.12",
     "typescript": "^6.0.3",
     "vite": "6.3.5"

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { authenticateLogin, registerFirstAdmin } from "../lib/auth/core.ts";
+import { t } from "../lib/i18n.ts";
 
 function form(values: Record<string, string>) {
   const formData = new FormData();
@@ -119,7 +120,7 @@ test("registerFirstAdmin rejects setup after the first organization exists", asy
   );
 
   assert.equal(result.ok, false);
-  assert.match(result.message, /already complete/);
+  assert.equal(result.message, t("auth.messages.firstOrganizationComplete"));
 });
 
 test("authenticateLogin validates email and password before querying users", async () => {
@@ -171,8 +172,8 @@ test("authenticateLogin rejects inactive users and invalid passwords without exp
     },
   });
 
-  assert.deepEqual(inactive, { ok: false, message: "Email or password is incorrect." });
-  assert.deepEqual(badPassword, { ok: false, message: "Email or password is incorrect." });
+  assert.deepEqual(inactive, { ok: false, message: t("auth.messages.invalidCredentials") });
+  assert.deepEqual(badPassword, { ok: false, message: t("auth.messages.invalidCredentials") });
 });
 
 test("authenticateLogin creates a session for active users with valid credentials", async () => {
