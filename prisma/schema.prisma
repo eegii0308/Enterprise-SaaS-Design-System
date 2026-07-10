@@ -18,6 +18,7 @@ model Organization {
   bankAccounts           BankAccount[]
   importBatches          ImportBatch[]
   importRows             ImportRow[]
+  invitations            Invitation[]
   matchingRules          MatchingRule[]
   memberships            Membership[]
   reconciliationMatches  ReconciliationMatch[]
@@ -32,15 +33,16 @@ model Organization {
 }
 
 model User {
-  id           String       @id @default(cuid())
-  email        String       @unique
-  passwordHash String       @map("password_hash")
-  fullName     String       @map("full_name")
-  status       UserStatus   @default(ACTIVE)
-  createdAt    DateTime     @default(now()) @map("created_at")
-  updatedAt    DateTime     @updatedAt @map("updated_at")
-  memberships  Membership[]
-  sessions     Session[]
+  id              String       @id @default(cuid())
+  email           String       @unique
+  passwordHash    String       @map("password_hash")
+  fullName        String       @map("full_name")
+  status          UserStatus   @default(ACTIVE)
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+  memberships     Membership[]
+  sentInvitations Invitation[]
+  sessions        Session[]
 
   @@map("users")
 }
@@ -76,6 +78,7 @@ model Membership {
   role           Role             @relation(fields: [roleId], references: [id])
   sessions       Session[]
   user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invitations    Invitation[]
 
   @@unique([organizationId, userId])
   @@index([userId])
@@ -93,6 +96,7 @@ model Role {
   memberships    Membership[]
   permissions    RolePermission[]
   organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitations    Invitation[]
 
   @@unique([organizationId, name])
   @@map("roles")
@@ -107,6 +111,35 @@ model RolePermission {
 
   @@unique([roleId, permission])
   @@map("role_permissions")
+}
+
+model Invitation {
+  id              String           @id @default(cuid())
+  organizationId  String           @map("organization_id")
+  email           String
+  roleId          String           @map("role_id")
+  invitedByUserId String           @map("invited_by_user_id")
+  membershipId    String?          @map("membership_id")
+  tokenHash       String           @unique @map("token_hash")
+  status          InvitationStatus @default(PENDING)
+  expiresAt       DateTime         @map("expires_at")
+  acceptedAt      DateTime?        @map("accepted_at")
+  revokedAt       DateTime?        @map("revoked_at")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  role            Role             @relation(fields: [roleId], references: [id])
+  invitedBy       User             @relation(fields: [invitedByUserId], references: [id])
+  membership      Membership?      @relation(fields: [membershipId], references: [id])
+
+  // A partial unique index on (organization_id, email) WHERE status = 'PENDING'
+  // also exists (see the invitations migration) to prevent duplicate concurrent
+  // pending invitations for the same email; Prisma's schema DSL cannot express
+  // a WHERE-qualified unique index, so it is not declared here (same pattern
+  // already used by BankAccount above).
+  @@index([organizationId, status])
+  @@index([email])
+  @@map("invitations")
 }
 
 model BankAccount {
@@ -380,6 +413,13 @@ enum MembershipStatus {
   ACTIVE
   DISABLED
   INVITED
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
 }
 
 enum SystemRoleName {
