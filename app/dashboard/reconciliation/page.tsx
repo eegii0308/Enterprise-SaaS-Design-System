@@ -6,6 +6,7 @@ import { hasPermission, requirePermission } from "@/lib/permissions/authorize";
 import { buildReconciliationTransactionQuery, firstParam, parsePage } from "@/lib/reconciliation/transaction-query";
 import { openRunStatuses } from "@/lib/reconciliation/run-lifecycle";
 import { calculateReconciliationTieOut, type ReconciliationTieOutSummary } from "@/lib/reconciliation/tie-out-summary";
+import { evaluateApprovalReadiness } from "@/lib/reconciliation/approval-validation";
 import { Button } from "@/src/app/components/ui/button";
 import { Badge } from "@/src/app/components/ui/badge";
 import {
@@ -973,6 +974,10 @@ export default async function ReconciliationPage({ searchParams }: Reconciliatio
   }));
 
   const tieOutSummary = await calculateReconciliationTieOut({ reconciliationRunId: run.id }, { organizationId });
+  const approvalReadiness =
+    run.status === ReconciliationRunStatus.READY_FOR_REVIEW && canApprove
+      ? await evaluateApprovalReadiness({ reconciliationRunId: run.id }, { organizationId })
+      : null;
   const isRunLockedForMatching = run.status === ReconciliationRunStatus.READY_FOR_REVIEW;
 
   const currentParams = new URLSearchParams();
@@ -1026,8 +1031,18 @@ export default async function ReconciliationPage({ searchParams }: Reconciliatio
             <SubmitRunButton reconciliationRunId={run.id} disabled={totalConfirmedMatches === 0} />
           ) : null}
 
-          {run.status === ReconciliationRunStatus.READY_FOR_REVIEW && canApprove ? (
-            <ApproveRunButton reconciliationRunId={run.id} />
+          {approvalReadiness ? (
+            <ApproveRunButton
+              reconciliationRunId={run.id}
+              hasOutstandingItems={approvalReadiness.hasOutstandingItems}
+              varianceLabel={formatAmount(approvalReadiness.variance, approvalReadiness.currency)}
+              unmatchedBankCount={approvalReadiness.unmatchedBankCount}
+              unmatchedBankAmountLabel={formatAmount(approvalReadiness.unmatchedBankAmount, approvalReadiness.currency)}
+              unmatchedLedgerCount={approvalReadiness.unmatchedLedgerCount}
+              unmatchedLedgerAmountLabel={formatAmount(approvalReadiness.unmatchedLedgerAmount, approvalReadiness.currency)}
+              exceptionCount={approvalReadiness.exceptionCount}
+              exceptionAmountLabel={formatAmount(approvalReadiness.exceptionAmount, approvalReadiness.currency)}
+            />
           ) : null}
 
           {run.status === ReconciliationRunStatus.APPROVED && canApprove ? <ReopenRunButton reconciliationRunId={run.id} /> : null}

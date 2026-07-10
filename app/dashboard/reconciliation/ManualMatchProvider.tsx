@@ -547,31 +547,132 @@ export function SubmitRunButton({ reconciliationRunId, disabled = false }: { rec
   );
 }
 
-export function ApproveRunButton({ reconciliationRunId }: { reconciliationRunId: string }) {
+export function ApproveRunButton({
+  reconciliationRunId,
+  hasOutstandingItems,
+  varianceLabel,
+  unmatchedBankCount,
+  unmatchedBankAmountLabel,
+  unmatchedLedgerCount,
+  unmatchedLedgerAmountLabel,
+  exceptionCount,
+  exceptionAmountLabel,
+}: {
+  reconciliationRunId: string;
+  hasOutstandingItems: boolean;
+  varianceLabel: string;
+  unmatchedBankCount: number;
+  unmatchedBankAmountLabel: string;
+  unmatchedLedgerCount: number;
+  unmatchedLedgerAmountLabel: string;
+  exceptionCount: number;
+  exceptionAmountLabel: string;
+}) {
   const router = useRouter();
-  const [result, setResult] = useState<SubmitResult>({ status: "idle" });
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  function handleApprove() {
+  const canSubmit = (!hasOutstandingItems || reason.trim().length > 0) && !isPending;
+
+  function handleOpenChange(nextOpen: boolean) {
+    setOpen(nextOpen);
+    if (!nextOpen) {
+      setReason("");
+      setFormError(null);
+    }
+  }
+
+  function handleConfirm() {
+    if (!canSubmit) {
+      return;
+    }
+
     startTransition(async () => {
-      const response = await approveReconciliationRunAction({ reconciliationRunId });
+      const response = await approveReconciliationRunAction({
+        reconciliationRunId,
+        approvalReason: reason.trim() || undefined,
+      });
 
       if (response.ok) {
+        setOpen(false);
+        setReason("");
+        setFormError(null);
         router.refresh();
       } else {
-        setResult({ status: "error", message: response.message });
+        setFormError(response.message);
       }
     });
   }
 
   return (
-    <div className="flex flex-col items-end gap-1">
-      <Button type="button" onClick={handleApprove} disabled={isPending} className="gap-2">
-        {isPending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <ShieldCheck size={16} aria-hidden="true" />}
-        Approve run
-      </Button>
-      {result.status === "error" ? <p className="text-xs text-red-700">{result.message}</p> : null}
-    </div>
+    <AlertDialog open={open} onOpenChange={handleOpenChange}>
+      <AlertDialogTrigger asChild>
+        <Button type="button" className="gap-2">
+          <ShieldCheck size={16} aria-hidden="true" />
+          Approve run
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Approve this reconciliation run?</AlertDialogTitle>
+          <AlertDialogDescription>
+            {hasOutstandingItems
+              ? "This run has outstanding items. Review them below and provide a reason to approve anyway."
+              : "No outstanding items were found for this run's variance, unmatched transactions, or exceptions."}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+
+        <dl className="grid grid-cols-2 gap-3 rounded-md border border-slate-100 bg-slate-50 p-3 text-xs">
+          <div>
+            <dt className="font-semibold uppercase text-slate-500">Variance</dt>
+            <dd className="mt-0.5 text-slate-800">{varianceLabel}</dd>
+          </div>
+          <div>
+            <dt className="font-semibold uppercase text-slate-500">Unmatched bank</dt>
+            <dd className="mt-0.5 text-slate-800">
+              {unmatchedBankCount.toLocaleString("en")} · {unmatchedBankAmountLabel}
+            </dd>
+          </div>
+          <div>
+            <dt className="font-semibold uppercase text-slate-500">Unmatched ledger</dt>
+            <dd className="mt-0.5 text-slate-800">
+              {unmatchedLedgerCount.toLocaleString("en")} · {unmatchedLedgerAmountLabel}
+            </dd>
+          </div>
+          <div>
+            <dt className="font-semibold uppercase text-slate-500">Open exceptions</dt>
+            <dd className="mt-0.5 text-slate-800">
+              {exceptionCount.toLocaleString("en")} · {exceptionAmountLabel}
+            </dd>
+          </div>
+        </dl>
+
+        {hasOutstandingItems ? (
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-semibold text-slate-600">Approval reason (required)</span>
+            <textarea
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              rows={3}
+              placeholder="Explain why this run is being approved despite outstanding items"
+              className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 placeholder:text-slate-400"
+            />
+          </label>
+        ) : null}
+
+        {formError ? <p className="text-xs text-red-700">{formError}</p> : null}
+
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <Button type="button" onClick={handleConfirm} disabled={!canSubmit} className="gap-2">
+            {isPending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <ShieldCheck size={16} aria-hidden="true" />}
+            Approve run
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 

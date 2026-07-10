@@ -12,8 +12,10 @@ import {
 } from "../lib/reconciliation/manual-match.ts";
 import {
   createReconciliationRun,
+  approveReconciliationRun,
   reopenReconciliationRun,
   type CreateRunInput,
+  type ApproveRunInput,
   type ReopenRunInput,
   type RunLifecycleDatabase,
 } from "../lib/reconciliation/run-lifecycle.ts";
@@ -107,6 +109,16 @@ async function simulateRejectManualMatchAction(
 ) {
   assertPermission(role, "reconciliation.run");
   return rejectManualMatch(input, context, database);
+}
+
+async function simulateApproveReconciliationRunAction(
+  role: RoleName,
+  input: ApproveRunInput,
+  context: ActionContext,
+  database: RunLifecycleDatabase,
+) {
+  assertPermission(role, "reconciliation.approve");
+  return approveReconciliationRun(input, context, database);
 }
 
 async function simulateReopenReconciliationRunAction(
@@ -366,14 +378,30 @@ const rejectInput: RejectMatchInput = { reconciliationMatchId: "match-1", reason
 // ---- reopenReconciliationRunAction mock database ----
 
 type ReopenRunState = {
-  run?: { id: string; organizationId: string; status: ReconciliationRunStatus } | null;
+  run?: {
+    id: string;
+    organizationId: string;
+    status: ReconciliationRunStatus;
+    bankAccountId: string;
+    periodStart: Date;
+    periodEnd: Date;
+    organization: { defaultCurrency: string };
+  } | null;
   runUpdates: unknown[];
   auditLogs: unknown[];
 };
 
 function createReopenRunDatabase(): RunLifecycleDatabase & { state: ReopenRunState } {
   const state: ReopenRunState = {
-    run: { id: "run-1", organizationId: "org-1", status: ReconciliationRunStatus.APPROVED },
+    run: {
+      id: "run-1",
+      organizationId: "org-1",
+      status: ReconciliationRunStatus.APPROVED,
+      bankAccountId: "account-1",
+      periodStart: new Date("2026-06-01T00:00:00.000Z"),
+      periodEnd: new Date("2026-06-30T23:59:59.999Z"),
+      organization: { defaultCurrency: "MNT" },
+    },
     runUpdates: [],
     auditLogs: [],
   };
@@ -410,6 +438,22 @@ function createReopenRunDatabase(): RunLifecycleDatabase & { state: ReopenRunSta
           async count() {
             return 1;
           },
+          async findMany() {
+            return [];
+          },
+        },
+        // Approval-readiness reads used by approveReconciliationRunAction's
+        // evaluateApprovalReadiness call. Zeroed out so this shared fixture
+        // represents a clean run (no approval reason required); the
+        // outstanding-items/override business logic itself is covered by
+        // tests/reconciliation-run-lifecycle.test.ts.
+        transaction: {
+          async aggregate() {
+            return { _sum: { amount: null } };
+          },
+          async count() {
+            return 0;
+          },
         },
         auditLog: {
           async create(args) {
@@ -422,6 +466,14 @@ function createReopenRunDatabase(): RunLifecycleDatabase & { state: ReopenRunSta
   };
 }
 
+function createApproveRunDatabase(): RunLifecycleDatabase & { state: ReopenRunState } {
+  const db = createReopenRunDatabase();
+  if (db.state.run) {
+    db.state.run.status = ReconciliationRunStatus.READY_FOR_REVIEW;
+  }
+  return db;
+}
+
 const createRunInput: CreateRunInput = {
   bankAccountId: "account-1",
   periodStart: new Date("2026-06-01T00:00:00.000Z"),
@@ -429,6 +481,7 @@ const createRunInput: CreateRunInput = {
   name: "June 2026 operating account",
 };
 
+const approveInput: ApproveRunInput = { reconciliationRunId: "run-1" };
 const reopenInput: ReopenRunInput = { reconciliationRunId: "run-1", reason: "Discrepancy found after approval" };
 
 // ---- manuallyMatchTransactionsAction mock database ----
@@ -629,6 +682,36 @@ for (const role of ["AUDITOR", "VIEWER"] as const) {
 
     assert.equal(db.state.matchUpdates.length, 0);
     assert.equal(db.state.updates.length, 0);
+    assert.equal(db.state.auditLogs.length, 0);
+  });
+}
+
+// ---- approveReconciliationRunAction: allowed roles ----
+
+for (const role of ["FINANCE_MANAGER", "ADMIN"] as const) {
+  test(`approveReconciliationRunAction allows ${role} and executes the domain function`, async () => {
+    const db = createApproveRunDatabase();
+
+    const result = await simulateApproveReconciliationRunAction(role, approveInput, context, db);
+
+    assert.equal(result.status, ReconciliationRunStatus.APPROVED);
+    assert.equal(db.state.runUpdates.length, 1);
+    assert.equal(db.state.auditLogs.length, 1);
+  });
+}
+
+// ---- approveReconciliationRunAction: denied roles ----
+
+for (const role of ["ACCOUNTANT", "AUDITOR", "VIEWER"] as const) {
+  test(`approveReconciliationRunAction denies ${role} with FORBIDDEN and never calls the domain function`, async () => {
+    const db = createApproveRunDatabase();
+
+    await assert.rejects(
+      simulateApproveReconciliationRunAction(role, approveInput, context, db),
+      (error) => error instanceof SimulatedPermissionError && error.code === "FORBIDDEN",
+    );
+
+    assert.equal(db.state.runUpdates.length, 0);
     assert.equal(db.state.auditLogs.length, 0);
   });
 }

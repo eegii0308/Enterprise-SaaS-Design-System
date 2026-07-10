@@ -6,6 +6,7 @@ import {
   type ReconciliationRun,
 } from "@prisma/client";
 import { prisma } from "../db/client.ts";
+import { evaluateApprovalReadiness, ApprovalValidationError } from "./approval-validation.ts";
 
 export type RunLifecycleErrorCode = "VALIDATION" | "FORBIDDEN" | "CONFLICT" | "SERVER";
 
@@ -37,6 +38,7 @@ export type SubmitRunInput = {
 
 export type ApproveRunInput = {
   reconciliationRunId: string;
+  approvalReason?: string;
 };
 
 export type ReopenRunInput = {
@@ -44,13 +46,25 @@ export type ReopenRunInput = {
   reason: string;
 };
 
-type RunRecord = Pick<ReconciliationRun, "id" | "organizationId" | "status">;
+// Shared by submit/approve/reopen even though only approveReconciliationRun's
+// readiness evaluation (evaluateApprovalReadiness -> calculateReconciliationTieOut)
+// needs bankAccountId/periodStart/periodEnd/organization; every findUnique
+// select below fetches the full shape so the type always matches what is
+// actually returned, rather than letting submit/reopen's narrower selects
+// drift out of sync with a type that promises fields they don't fetch.
+type RunRecord = Pick<ReconciliationRun, "id" | "organizationId" | "status" | "bankAccountId" | "periodStart" | "periodEnd"> & {
+  organization: { defaultCurrency: string };
+};
 
 type BankAccountRecord = Pick<BankAccount, "id" | "organizationId" | "status">;
 
 type OverlappingRunRecord = Pick<ReconciliationRun, "id">;
 
 type UpdateManyResult = { count: number };
+
+type MatchBankLegRecord = { bankTransactionId: string };
+
+type AmountAggregateResult = { _sum: { amount: Prisma.Decimal | number | string | null } };
 
 type RunLifecycleTransactionClient = {
   bankAccount: {
@@ -64,6 +78,11 @@ type RunLifecycleTransactionClient = {
     updateMany(args: unknown): Promise<UpdateManyResult>;
   };
   reconciliationMatch: {
+    count(args: unknown): Promise<number>;
+    findMany(args: unknown): Promise<MatchBankLegRecord[]>;
+  };
+  transaction: {
+    aggregate(args: unknown): Promise<AmountAggregateResult>;
     count(args: unknown): Promise<number>;
   };
   auditLog: {
@@ -144,7 +163,7 @@ function assertBankAccountAccess(
 export async function createReconciliationRun(
   input: CreateRunInput,
   context: LifecycleContext,
-  database: RunLifecycleDatabase = prisma as RunLifecycleDatabase,
+  database: RunLifecycleDatabase = prisma as unknown as RunLifecycleDatabase,
 ): Promise<CreateRunResult> {
   validateCreateInput(input);
 
@@ -267,14 +286,22 @@ function assertReopenable(run: RunRecord) {
 export async function submitReconciliationRunForReview(
   input: SubmitRunInput,
   context: LifecycleContext,
-  database: RunLifecycleDatabase = prisma as RunLifecycleDatabase,
+  database: RunLifecycleDatabase = prisma as unknown as RunLifecycleDatabase,
 ): Promise<SubmitRunResult> {
   validateRunId(input.reconciliationRunId);
 
   return database.$transaction(async (tx) => {
     const run = await tx.reconciliationRun.findUnique({
       where: { id: input.reconciliationRunId },
-      select: { id: true, organizationId: true, status: true },
+      select: {
+        id: true,
+        organizationId: true,
+        status: true,
+        bankAccountId: true,
+        periodStart: true,
+        periodEnd: true,
+        organization: { select: { defaultCurrency: true } },
+      },
     });
 
     assertRunAccess(run, input.reconciliationRunId, context.organizationId);
@@ -335,22 +362,59 @@ export async function submitReconciliationRunForReview(
   });
 }
 
+function assertApprovalReasonProvided(approvalReason: string | undefined) {
+  if (!approvalReason || approvalReason.trim().length === 0) {
+    throw new RunLifecycleError(
+      "This run has outstanding items (unresolved variance, unmatched transactions, or open exceptions). An approval reason is required to approve it anyway.",
+      "VALIDATION",
+    );
+  }
+}
+
 export async function approveReconciliationRun(
   input: ApproveRunInput,
   context: LifecycleContext,
-  database: RunLifecycleDatabase = prisma as RunLifecycleDatabase,
+  database: RunLifecycleDatabase = prisma as unknown as RunLifecycleDatabase,
 ): Promise<ApproveRunResult> {
   validateRunId(input.reconciliationRunId);
 
   return database.$transaction(async (tx) => {
     const run = await tx.reconciliationRun.findUnique({
       where: { id: input.reconciliationRunId },
-      select: { id: true, organizationId: true, status: true },
+      select: {
+        id: true,
+        organizationId: true,
+        status: true,
+        bankAccountId: true,
+        periodStart: true,
+        periodEnd: true,
+        organization: { select: { defaultCurrency: true } },
+      },
     });
 
     assertRunAccess(run, input.reconciliationRunId, context.organizationId);
     assertApprovable(run);
 
+    // Centralized approval business rules (financial variance, unmatched
+    // bank/ledger transactions, open exceptions) live in
+    // evaluateApprovalReadiness (approval-validation.ts), not here. Evaluated
+    // inside this same transaction, immediately before the CAS write, so the
+    // snapshot reflects the exact state being approved.
+    let readiness;
+    try {
+      readiness = await evaluateApprovalReadiness({ reconciliationRunId: run.id }, context, tx);
+    } catch (error) {
+      if (error instanceof ApprovalValidationError) {
+        throw new RunLifecycleError(error.message, error.code);
+      }
+      throw error;
+    }
+
+    if (readiness.hasOutstandingItems) {
+      assertApprovalReasonProvided(input.approvalReason);
+    }
+
+    const approvalReason = input.approvalReason?.trim() || null;
     const approvedAt = new Date();
     // CAS keyed on READY_FOR_REVIEW: guards against two concurrent approvals
     // (or an approval racing a reopen) both succeeding for the same run.
@@ -386,6 +450,19 @@ export async function approveReconciliationRun(
           organizationId: context.organizationId,
           userId: context.userId,
           reconciliationRunId: run.id,
+          approvalReason,
+          overrodeOutstandingItems: readiness.hasOutstandingItems,
+          approvalSnapshot: {
+            currency: readiness.currency,
+            variance: readiness.variance.toString(),
+            unmatchedBankCount: readiness.unmatchedBankCount,
+            unmatchedBankAmount: readiness.unmatchedBankAmount.toString(),
+            unmatchedLedgerCount: readiness.unmatchedLedgerCount,
+            unmatchedLedgerAmount: readiness.unmatchedLedgerAmount.toString(),
+            exceptionCount: readiness.exceptionCount,
+            exceptionAmount: readiness.exceptionAmount.toString(),
+            evaluatedAt: readiness.evaluatedAt.toISOString(),
+          },
           timestamp: approvedAt.toISOString(),
         } satisfies Prisma.JsonObject,
       },
@@ -401,14 +478,22 @@ export async function approveReconciliationRun(
 export async function reopenReconciliationRun(
   input: ReopenRunInput,
   context: LifecycleContext,
-  database: RunLifecycleDatabase = prisma as RunLifecycleDatabase,
+  database: RunLifecycleDatabase = prisma as unknown as RunLifecycleDatabase,
 ): Promise<ReopenRunResult> {
   validateReopenInput(input);
 
   return database.$transaction(async (tx) => {
     const run = await tx.reconciliationRun.findUnique({
       where: { id: input.reconciliationRunId },
-      select: { id: true, organizationId: true, status: true },
+      select: {
+        id: true,
+        organizationId: true,
+        status: true,
+        bankAccountId: true,
+        periodStart: true,
+        periodEnd: true,
+        organization: { select: { defaultCurrency: true } },
+      },
     });
 
     assertRunAccess(run, input.reconciliationRunId, context.organizationId);

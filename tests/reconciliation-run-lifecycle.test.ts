@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ReconciliationRunStatus } from "@prisma/client";
+import { ReconciliationRunStatus, SourceType, TransactionStatus } from "@prisma/client";
 import {
   createReconciliationRun,
   submitReconciliationRunForReview,
@@ -14,10 +14,17 @@ import {
   RunLifecycleError,
 } from "../lib/reconciliation/run-lifecycle.ts";
 
+const periodStart = new Date("2026-06-01T00:00:00.000Z");
+const periodEnd = new Date("2026-06-30T23:59:59.999Z");
+
 type MockRun = {
   id: string;
   organizationId: string;
   status: ReconciliationRunStatus;
+  bankAccountId: string;
+  periodStart: Date;
+  periodEnd: Date;
+  organization: { defaultCurrency: string };
 };
 
 type MockBankAccount = {
@@ -35,6 +42,14 @@ type MockState = {
   runCreates: unknown[];
   auditLogs: unknown[];
   transitionCount?: number;
+  // Approval-readiness inputs (evaluateApprovalReadiness, via tx). Default to
+  // an entirely clean run (no variance, no unmatched items, no exceptions)
+  // so existing approve tests that don't care about readiness keep passing
+  // without an approvalReason.
+  aggregateSums?: Record<string, string | number | null>;
+  counts?: Record<string, number>;
+  confirmedMatches?: { bankTransactionId: string }[];
+  matchedAggregateSum?: string | number | null;
 };
 
 const context = {
@@ -47,6 +62,10 @@ function run(overrides: Partial<MockRun> = {}): MockRun {
     id: "run-1",
     organizationId: "org-1",
     status: ReconciliationRunStatus.IN_PROGRESS,
+    bankAccountId: "account-1",
+    periodStart,
+    periodEnd,
+    organization: { defaultCurrency: "MNT" },
     ...overrides,
   };
 }
@@ -69,6 +88,10 @@ function createDatabase(state: Partial<MockState> = {}): RunLifecycleDatabase & 
     runUpdates: [],
     runCreates: [],
     auditLogs: [],
+    aggregateSums: {},
+    counts: {},
+    confirmedMatches: [],
+    matchedAggregateSum: null,
     ...state,
   };
 
@@ -104,6 +127,38 @@ function createDatabase(state: Partial<MockState> = {}): RunLifecycleDatabase & 
         reconciliationMatch: {
           async count() {
             return fullState.confirmedMatchCount;
+          },
+          async findMany() {
+            return fullState.confirmedMatches ?? [];
+          },
+        },
+        transaction: {
+          async aggregate(args) {
+            const where = (args as { where: Record<string, unknown> }).where;
+
+            if (where.id) {
+              return { _sum: { amount: fullState.matchedAggregateSum ?? null } };
+            }
+
+            const isBank = where.sourceType === SourceType.BANK;
+            const status = where.status as TransactionStatus | undefined;
+            let key: string;
+            if (status === TransactionStatus.UNMATCHED) {
+              key = isBank ? "unmatchedBank" : "unmatchedLedger";
+            } else if (status === TransactionStatus.EXCEPTION) {
+              key = isBank ? "exceptionBank" : "exceptionLedger";
+            } else {
+              key = isBank ? "bankTotal" : "ledgerTotal";
+            }
+
+            return { _sum: { amount: fullState.aggregateSums?.[key] ?? null } };
+          },
+          async count(args) {
+            const where = (args as { where: Record<string, unknown> }).where;
+            const isBank = where.sourceType === SourceType.BANK;
+            const status = where.status as TransactionStatus | undefined;
+            const key = `${status === TransactionStatus.EXCEPTION ? "exception" : "unmatched"}${isBank ? "Bank" : "Ledger"}`;
+            return fullState.counts?.[key] ?? 0;
           },
         },
         auditLog: {
@@ -407,6 +462,172 @@ test("approveReconciliationRun rejects a missing reconciliationRunId", async () 
     approveReconciliationRun({ reconciliationRunId: "" }, context, db),
     (error) => error instanceof RunLifecycleError && error.code === "VALIDATION",
   );
+});
+
+// ---- Phase 7C: approval readiness (variance, unmatched items, exceptions) ----
+
+test("approveReconciliationRun approves without a reason when the run is entirely clean", async () => {
+  const db = createDatabase({ run: run({ status: ReconciliationRunStatus.READY_FOR_REVIEW }) });
+
+  const result = await approveReconciliationRun(approveInput, context, db);
+
+  assert.equal(result.status, ReconciliationRunStatus.APPROVED);
+  const auditLog = db.state.auditLogs[0] as { data: { metadata: Record<string, unknown> } };
+  assert.equal(auditLog.data.metadata.approvalReason, null);
+  assert.equal(auditLog.data.metadata.overrodeOutstandingItems, false);
+});
+
+test("approveReconciliationRun rejects approval of a run with financial variance and no reason", async () => {
+  const db = createDatabase({
+    run: run({ status: ReconciliationRunStatus.READY_FOR_REVIEW }),
+    aggregateSums: { bankTotal: "1000.00", ledgerTotal: "950.00" },
+  });
+
+  await assert.rejects(
+    approveReconciliationRun(approveInput, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "VALIDATION",
+  );
+  assert.equal(db.state.runUpdates.length, 0);
+  assert.equal(db.state.auditLogs.length, 0);
+});
+
+test("approveReconciliationRun rejects approval of a run with unmatched bank transactions and no reason", async () => {
+  const db = createDatabase({
+    run: run({ status: ReconciliationRunStatus.READY_FOR_REVIEW }),
+    counts: { unmatchedBank: 2 },
+  });
+
+  await assert.rejects(
+    approveReconciliationRun(approveInput, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "VALIDATION",
+  );
+});
+
+test("approveReconciliationRun rejects approval of a run with unmatched ledger transactions and no reason", async () => {
+  const db = createDatabase({
+    run: run({ status: ReconciliationRunStatus.READY_FOR_REVIEW }),
+    counts: { unmatchedLedger: 1 },
+  });
+
+  await assert.rejects(
+    approveReconciliationRun(approveInput, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "VALIDATION",
+  );
+});
+
+test("approveReconciliationRun rejects approval of a run with open exceptions and no reason", async () => {
+  const db = createDatabase({
+    run: run({ status: ReconciliationRunStatus.READY_FOR_REVIEW }),
+    counts: { exceptionBank: 1 },
+  });
+
+  await assert.rejects(
+    approveReconciliationRun(approveInput, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "VALIDATION",
+  );
+});
+
+test("approveReconciliationRun rejects a blank (whitespace-only) reason as if no reason was given", async () => {
+  const db = createDatabase({
+    run: run({ status: ReconciliationRunStatus.READY_FOR_REVIEW }),
+    counts: { unmatchedBank: 1 },
+  });
+
+  await assert.rejects(
+    approveReconciliationRun({ ...approveInput, approvalReason: "   " }, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "VALIDATION",
+  );
+});
+
+test("approveReconciliationRun flags outstanding items by count even when unmatched amounts net to zero", async () => {
+  // Two unmatched bank transactions of +100 and -100 sum to a zero amount,
+  // which would look "clean" by amount alone; the count check must still
+  // catch them.
+  const db = createDatabase({
+    run: run({ status: ReconciliationRunStatus.READY_FOR_REVIEW }),
+    aggregateSums: { unmatchedBank: "0.00" },
+    counts: { unmatchedBank: 2 },
+  });
+
+  await assert.rejects(
+    approveReconciliationRun(approveInput, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "VALIDATION",
+  );
+});
+
+test("approveReconciliationRun approves a run with outstanding items when an explicit reason is provided (override)", async () => {
+  const db = createDatabase({
+    run: run({ status: ReconciliationRunStatus.READY_FOR_REVIEW }),
+    aggregateSums: { bankTotal: "1000.00", ledgerTotal: "950.00", unmatchedBank: "25.00" },
+    counts: { unmatchedBank: 1, exceptionLedger: 2 },
+  });
+
+  const result = await approveReconciliationRun(
+    { ...approveInput, approvalReason: "Approved by controller pending next-cycle cleanup" },
+    context,
+    db,
+  );
+
+  assert.equal(result.status, ReconciliationRunStatus.APPROVED);
+  assert.equal(db.state.runUpdates.length, 1);
+  assert.equal(db.state.auditLogs.length, 1);
+
+  const auditLog = db.state.auditLogs[0] as {
+    data: {
+      actorUserId: string;
+      metadata: {
+        approvalReason: string;
+        overrodeOutstandingItems: boolean;
+        approvalSnapshot: {
+          currency: string;
+          variance: string;
+          unmatchedBankCount: number;
+          unmatchedBankAmount: string;
+          unmatchedLedgerCount: number;
+          exceptionCount: number;
+          evaluatedAt: string;
+        };
+      };
+    };
+  };
+  assert.equal(auditLog.data.actorUserId, "user-1");
+  assert.equal(auditLog.data.metadata.approvalReason, "Approved by controller pending next-cycle cleanup");
+  assert.equal(auditLog.data.metadata.overrodeOutstandingItems, true);
+  assert.equal(auditLog.data.metadata.approvalSnapshot.currency, "MNT");
+  assert.equal(auditLog.data.metadata.approvalSnapshot.variance, "50");
+  assert.equal(auditLog.data.metadata.approvalSnapshot.unmatchedBankCount, 1);
+  assert.equal(auditLog.data.metadata.approvalSnapshot.unmatchedBankAmount, "25");
+  assert.equal(auditLog.data.metadata.approvalSnapshot.unmatchedLedgerCount, 0);
+  assert.equal(auditLog.data.metadata.approvalSnapshot.exceptionCount, 2);
+  assert.match(auditLog.data.metadata.approvalSnapshot.evaluatedAt, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test("approveReconciliationRun still evaluates readiness and records a snapshot even when a reason is given for a clean run", async () => {
+  const db = createDatabase({ run: run({ status: ReconciliationRunStatus.READY_FOR_REVIEW }) });
+
+  await approveReconciliationRun({ ...approveInput, approvalReason: "Reviewed and confirmed clean" }, context, db);
+
+  const auditLog = db.state.auditLogs[0] as { data: { metadata: Record<string, unknown> } };
+  assert.equal(auditLog.data.metadata.approvalReason, "Reviewed and confirmed clean");
+  assert.equal(auditLog.data.metadata.overrodeOutstandingItems, false);
+});
+
+test("approveReconciliationRun rejects when a concurrent request already resolved the outstanding items and won the transition first", async () => {
+  // Even though this request's readiness snapshot still shows outstanding
+  // items requiring a reason, the CAS on run status is the final word: if a
+  // concurrent approval already committed, this request must still fail
+  // with CONFLICT rather than silently succeeding a second time.
+  const db = createDatabase({
+    run: run({ status: ReconciliationRunStatus.READY_FOR_REVIEW }),
+    counts: { unmatchedBank: 1 },
+    transitionCount: 0,
+  });
+
+  await assert.rejects(
+    approveReconciliationRun({ ...approveInput, approvalReason: "Approved despite unmatched item" }, context, db),
+    (error) => error instanceof RunLifecycleError && error.code === "CONFLICT",
+  );
+  assert.equal(db.state.auditLogs.length, 0);
 });
 
 test("reopenReconciliationRun transitions an approved run to reopened and audits it", async () => {

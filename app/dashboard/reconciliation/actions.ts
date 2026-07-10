@@ -243,6 +243,7 @@ export async function submitReconciliationRunForReviewAction(input: {
 
 export async function approveReconciliationRunAction(input: {
   reconciliationRunId: string;
+  approvalReason?: string;
 }): Promise<RunLifecycleActionState> {
   const session = await requirePermission("reconciliation.approve");
 

@@ -61,6 +61,7 @@ Status: Explicit reconciliation run creation, manual match creation, confirmed-m
 - Add approval permissions and audit logs. (done — `reconciliation.run` and `reconciliation.approve` are enforced server-side, and match creation, match removal, match correction, run submission, run approval, and run reopening each write audit log events)
 - Prevent overlapping open reconciliation runs for the same bank account and period. (done)
 - Manage bank accounts (create, edit, archive, reactivate), restricted to Admin/Finance Manager via a `bank_accounts.manage` permission, preventing duplicate active accounts for the same bank and account number while keeping archived accounts' historical reconciliation references intact. (done — `/dashboard/bank-accounts`)
+- Evaluate financial variance, unmatched bank/ledger transactions, and open exceptions before a run can be approved, requiring an explicit approval reason when any are outstanding and recording the approving user, reason, and a full approval snapshot in the audit trail. (done — `evaluateApprovalReadiness` in `lib/reconciliation/approval-validation.ts`, enforced inside `approveReconciliationRun`)
 
 Next planned work: review notes on exceptions/unresolved records; automated matching rules (numbered Phase 7 below).
 
