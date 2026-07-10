@@ -3,7 +3,20 @@
 import { createContext, useContext, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { SourceType } from "@prisma/client";
-import { AlertTriangle, CheckCircle2, Link2, Loader2, PencilLine, RotateCcw, Send, ShieldCheck, Unlink, XCircle } from "lucide-react";
+import {
+  AlertOctagon,
+  AlertTriangle,
+  CheckCircle2,
+  Link2,
+  Loader2,
+  PencilLine,
+  RotateCcw,
+  Send,
+  ShieldCheck,
+  Undo2,
+  Unlink,
+  XCircle,
+} from "lucide-react";
 import {
   manuallyMatchTransactionsAction,
   removeManualMatchAction,
@@ -12,6 +25,8 @@ import {
   submitReconciliationRunForReviewAction,
   approveReconciliationRunAction,
   reopenReconciliationRunAction,
+  markTransactionExceptionAction,
+  clearTransactionExceptionAction,
 } from "./actions";
 import { Button } from "@/src/app/components/ui/button";
 import {
@@ -386,6 +401,111 @@ export function CorrectMatchButton({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+export function MarkExceptionButton({ transactionId }: { transactionId: string }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  const canSubmit = reason.trim().length > 0 && !isPending;
+
+  function handleOpenChange(nextOpen: boolean) {
+    setOpen(nextOpen);
+    if (!nextOpen) {
+      setReason("");
+      setFormError(null);
+    }
+  }
+
+  function handleConfirm() {
+    if (!canSubmit) {
+      return;
+    }
+
+    startTransition(async () => {
+      const response = await markTransactionExceptionAction({ transactionId, reason });
+
+      if (response.ok) {
+        setOpen(false);
+        setReason("");
+        setFormError(null);
+        router.refresh();
+      } else {
+        setFormError(response.message);
+      }
+    });
+  }
+
+  return (
+    <AlertDialog open={open} onOpenChange={handleOpenChange}>
+      <AlertDialogTrigger asChild>
+        <Button type="button" variant="outline" className="gap-2">
+          <AlertOctagon size={16} aria-hidden="true" />
+          Mark exception
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Mark this transaction as an exception?</AlertDialogTitle>
+          <AlertDialogDescription>
+            The transaction moves out of the unmatched queue and into Exceptions until it is cleared.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+
+        <label className="flex flex-col gap-1">
+          <span className="text-xs font-semibold text-slate-600">Exception reason</span>
+          <textarea
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            rows={3}
+            placeholder="Explain why this transaction cannot be matched"
+            className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 placeholder:text-slate-400"
+          />
+        </label>
+
+        {formError ? <p className="text-xs text-red-700">{formError}</p> : null}
+
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <Button type="button" onClick={handleConfirm} disabled={!canSubmit} className="gap-2">
+            {isPending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <AlertOctagon size={16} aria-hidden="true" />}
+            Mark exception
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+export function ClearExceptionButton({ transactionId }: { transactionId: string }) {
+  const router = useRouter();
+  const [result, setResult] = useState<SubmitResult>({ status: "idle" });
+  const [isPending, startTransition] = useTransition();
+
+  function handleClear() {
+    startTransition(async () => {
+      const response = await clearTransactionExceptionAction({ transactionId });
+
+      if (response.ok) {
+        router.refresh();
+      } else {
+        setResult({ status: "error", message: response.message });
+      }
+    });
+  }
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <Button type="button" variant="outline" onClick={handleClear} disabled={isPending} className="gap-2">
+        {isPending ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Undo2 size={16} aria-hidden="true" />}
+        Clear exception
+      </Button>
+      {result.status === "error" ? <p className="text-xs text-red-700">{result.message}</p> : null}
+    </div>
   );
 }
 

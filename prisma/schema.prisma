@@ -193,6 +193,11 @@ model Transaction {
   currency            String
   status              TransactionStatus       @default(UNMATCHED)
   externalFingerprint String                  @map("external_fingerprint")
+  exceptionReason     String?                 @map("exception_reason")
+  exceptionMarkedBy   String?                 @map("exception_marked_by")
+  exceptionMarkedAt   DateTime?               @map("exception_marked_at")
+  exceptionClearedBy  String?                 @map("exception_cleared_by")
+  exceptionClearedAt  DateTime?               @map("exception_cleared_at")
   createdAt           DateTime                @default(now()) @map("created_at")
   updatedAt           DateTime                @updatedAt @map("updated_at")
   sourceRow           ImportRow?              @relation("CreatedTransaction")
@@ -327,6 +332,7 @@ model Report {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([organizationId, reportType])
+  @@index([organizationId, status])
   @@map("reports")
 }
 

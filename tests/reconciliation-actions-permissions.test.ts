@@ -13,6 +13,13 @@ import {
   type ReopenRunInput,
   type RunLifecycleDatabase,
 } from "../lib/reconciliation/run-lifecycle.ts";
+import {
+  markTransactionException,
+  clearTransactionException,
+  type MarkExceptionInput,
+  type ClearExceptionInput,
+  type ExceptionMarkingDatabase,
+} from "../lib/reconciliation/exception-marking.ts";
 
 // These tests exercise the permission gate that
 // app/dashboard/reconciliation/actions.ts applies in front of
@@ -41,9 +48,9 @@ class SimulatedPermissionError extends Error {
 }
 
 const ROLE_PERMISSIONS = {
-  ADMIN: ["reconciliation.run", "reconciliation.approve"],
-  FINANCE_MANAGER: ["reconciliation.run", "reconciliation.approve"],
-  ACCOUNTANT: ["reconciliation.run"],
+  ADMIN: ["reconciliation.run", "reconciliation.approve", "transactions.edit"],
+  FINANCE_MANAGER: ["reconciliation.run", "reconciliation.approve", "transactions.edit"],
+  ACCOUNTANT: ["reconciliation.run", "transactions.edit"],
   AUDITOR: [],
   VIEWER: [],
 } as const;
@@ -86,6 +93,26 @@ async function simulateReopenReconciliationRunAction(
 ) {
   assertPermission(role, "reconciliation.approve");
   return reopenReconciliationRun(input, context, database);
+}
+
+async function simulateMarkTransactionExceptionAction(
+  role: RoleName,
+  input: MarkExceptionInput,
+  context: ActionContext,
+  database: ExceptionMarkingDatabase,
+) {
+  assertPermission(role, "transactions.edit");
+  return markTransactionException(input, context, database);
+}
+
+async function simulateClearTransactionExceptionAction(
+  role: RoleName,
+  input: ClearExceptionInput,
+  context: ActionContext,
+  database: ExceptionMarkingDatabase,
+) {
+  assertPermission(role, "transactions.edit");
+  return clearTransactionException(input, context, database);
 }
 
 const context: ActionContext = { organizationId: "org-1", userId: "user-1" };
@@ -351,6 +378,48 @@ function createReopenRunDatabase(): RunLifecycleDatabase & { state: ReopenRunSta
 
 const reopenInput: ReopenRunInput = { reconciliationRunId: "run-1", reason: "Discrepancy found after approval" };
 
+// ---- markTransactionExceptionAction / clearTransactionExceptionAction mock database ----
+
+type ExceptionMarkingState = {
+  transactionRecord?: { id: string; organizationId: string; status: TransactionStatus } | null;
+  updates: unknown[];
+  auditLogs: unknown[];
+};
+
+function createExceptionMarkingDatabase(status: TransactionStatus): ExceptionMarkingDatabase & { state: ExceptionMarkingState } {
+  const state: ExceptionMarkingState = {
+    transactionRecord: { id: "txn-1", organizationId: "org-1", status },
+    updates: [],
+    auditLogs: [],
+  };
+
+  return {
+    state,
+    async $transaction(callback) {
+      return callback({
+        transaction: {
+          async findUnique() {
+            return state.transactionRecord ?? null;
+          },
+          async updateMany(args) {
+            state.updates.push(args);
+            return { count: 1 };
+          },
+        },
+        auditLog: {
+          async create(args) {
+            state.auditLogs.push(args);
+            return {};
+          },
+        },
+      });
+    },
+  };
+}
+
+const markExceptionInput: MarkExceptionInput = { transactionId: "txn-1", reason: "Bank fee, no ledger counterpart" };
+const clearExceptionInput: ClearExceptionInput = { transactionId: "txn-1" };
+
 // ---- correctManualMatchAction: allowed roles ----
 
 for (const role of ["ACCOUNTANT", "FINANCE_MANAGER", "ADMIN"] as const) {
@@ -443,6 +512,66 @@ for (const role of ["ACCOUNTANT", "AUDITOR", "VIEWER"] as const) {
     );
 
     assert.equal(db.state.runUpdates.length, 0);
+    assert.equal(db.state.auditLogs.length, 0);
+  });
+}
+
+// ---- markTransactionExceptionAction: allowed roles ----
+
+for (const role of ["ACCOUNTANT", "FINANCE_MANAGER", "ADMIN"] as const) {
+  test(`markTransactionExceptionAction allows ${role} and executes the domain function`, async () => {
+    const db = createExceptionMarkingDatabase(TransactionStatus.UNMATCHED);
+
+    const result = await simulateMarkTransactionExceptionAction(role, markExceptionInput, context, db);
+
+    assert.equal(result.status, TransactionStatus.EXCEPTION);
+    assert.equal(db.state.updates.length, 1);
+    assert.equal(db.state.auditLogs.length, 1);
+  });
+}
+
+// ---- markTransactionExceptionAction: denied roles ----
+
+for (const role of ["AUDITOR", "VIEWER"] as const) {
+  test(`markTransactionExceptionAction denies ${role} with FORBIDDEN and never calls the domain function`, async () => {
+    const db = createExceptionMarkingDatabase(TransactionStatus.UNMATCHED);
+
+    await assert.rejects(
+      simulateMarkTransactionExceptionAction(role, markExceptionInput, context, db),
+      (error) => error instanceof SimulatedPermissionError && error.code === "FORBIDDEN",
+    );
+
+    assert.equal(db.state.updates.length, 0);
+    assert.equal(db.state.auditLogs.length, 0);
+  });
+}
+
+// ---- clearTransactionExceptionAction: allowed roles ----
+
+for (const role of ["ACCOUNTANT", "FINANCE_MANAGER", "ADMIN"] as const) {
+  test(`clearTransactionExceptionAction allows ${role} and executes the domain function`, async () => {
+    const db = createExceptionMarkingDatabase(TransactionStatus.EXCEPTION);
+
+    const result = await simulateClearTransactionExceptionAction(role, clearExceptionInput, context, db);
+
+    assert.equal(result.status, TransactionStatus.UNMATCHED);
+    assert.equal(db.state.updates.length, 1);
+    assert.equal(db.state.auditLogs.length, 1);
+  });
+}
+
+// ---- clearTransactionExceptionAction: denied roles ----
+
+for (const role of ["AUDITOR", "VIEWER"] as const) {
+  test(`clearTransactionExceptionAction denies ${role} with FORBIDDEN and never calls the domain function`, async () => {
+    const db = createExceptionMarkingDatabase(TransactionStatus.EXCEPTION);
+
+    await assert.rejects(
+      simulateClearTransactionExceptionAction(role, clearExceptionInput, context, db),
+      (error) => error instanceof SimulatedPermissionError && error.code === "FORBIDDEN",
+    );
+
+    assert.equal(db.state.updates.length, 0);
     assert.equal(db.state.auditLogs.length, 0);
   });
 }

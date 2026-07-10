@@ -14,6 +14,11 @@ import {
   reopenReconciliationRun,
   RunLifecycleError,
 } from "@/lib/reconciliation/run-lifecycle";
+import {
+  markTransactionException,
+  clearTransactionException,
+  ExceptionMarkingError,
+} from "@/lib/reconciliation/exception-marking";
 
 type ManualMatchActionState =
   | {
@@ -32,6 +37,18 @@ type RunLifecycleActionState =
       ok: true;
       message: string;
       reconciliationRunId: string;
+    }
+  | {
+      ok: false;
+      message: string;
+      code: string;
+    };
+
+type ExceptionMarkingActionState =
+  | {
+      ok: true;
+      message: string;
+      transactionId: string;
     }
   | {
       ok: false;
@@ -241,6 +258,65 @@ export async function reopenReconciliationRunAction(input: {
     return {
       ok: false,
       message: "Reconciliation run could not be reopened.",
+      code: "SERVER",
+    };
+  }
+}
+
+export async function markTransactionExceptionAction(input: {
+  transactionId: string;
+  reason: string;
+}): Promise<ExceptionMarkingActionState> {
+  const session = await requirePermission("transactions.edit");
+
+  try {
+    const transaction = await markTransactionException(input, {
+      organizationId: session.organizationId,
+      userId: session.userId,
+    });
+
+    return {
+      ok: true,
+      message: "Transaction marked as an exception.",
+      transactionId: transaction.transactionId,
+    };
+  } catch (error) {
+    if (error instanceof ExceptionMarkingError) {
+      return { ok: false, message: error.message, code: error.code };
+    }
+
+    return {
+      ok: false,
+      message: "Transaction could not be marked as an exception.",
+      code: "SERVER",
+    };
+  }
+}
+
+export async function clearTransactionExceptionAction(input: {
+  transactionId: string;
+}): Promise<ExceptionMarkingActionState> {
+  const session = await requirePermission("transactions.edit");
+
+  try {
+    const transaction = await clearTransactionException(input, {
+      organizationId: session.organizationId,
+      userId: session.userId,
+    });
+
+    return {
+      ok: true,
+      message: "Exception cleared.",
+      transactionId: transaction.transactionId,
+    };
+  } catch (error) {
+    if (error instanceof ExceptionMarkingError) {
+      return { ok: false, message: error.message, code: error.code };
+    }
+
+    return {
+      ok: false,
+      message: "Exception could not be cleared.",
       code: "SERVER",
     };
   }

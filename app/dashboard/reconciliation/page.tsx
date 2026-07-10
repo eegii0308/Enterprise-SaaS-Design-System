@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, Filter, History, XCircle } from "lucide-react";
+import { AlertOctagon, ChevronLeft, ChevronRight, Filter, History, XCircle } from "lucide-react";
 import { Prisma, ReconciliationMatchStatus, ReconciliationRunStatus, SourceType, TransactionStatus } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
 import { hasPermission, requirePermission } from "@/lib/permissions/authorize";
@@ -9,8 +9,10 @@ import { Button } from "@/src/app/components/ui/button";
 import { Badge } from "@/src/app/components/ui/badge";
 import {
   ApproveRunButton,
+  ClearExceptionButton,
   CorrectMatchButton,
   ManualMatchProvider,
+  MarkExceptionButton,
   RejectMatchButton,
   RemoveMatchButton,
   ReopenRunButton,
@@ -334,6 +336,126 @@ function RejectedMatchesTable({
   );
 }
 
+type ExceptionTransactionRow = {
+  id: string;
+  transactionDate: Date;
+  description: string;
+  amount: Prisma.Decimal;
+  currency: string;
+  sourceType: SourceType;
+  exceptionReason: string | null;
+  exceptionMarkedBy: string | null;
+  exceptionMarkedAt: Date | null;
+};
+
+function buildExceptionPageHref(params: URLSearchParams, page: number) {
+  const nextParams = new URLSearchParams(params);
+  nextParams.set("exceptionPage", page.toString());
+  return `/dashboard/reconciliation?${nextParams.toString()}`;
+}
+
+function ExceptionTransactionsTable({
+  transactions,
+  totalTransactions,
+  page,
+  currentParams,
+  canClearException,
+}: {
+  transactions: ExceptionTransactionRow[];
+  totalTransactions: number;
+  page: number;
+  currentParams: URLSearchParams;
+  canClearException: boolean;
+}) {
+  if (totalTransactions === 0) {
+    return null;
+  }
+
+  const totalPages = Math.max(1, Math.ceil(totalTransactions / pageSize));
+  const firstResult = (page - 1) * pageSize + 1;
+  const lastResult = Math.min(page * pageSize, totalTransactions);
+
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+      <div className="flex flex-col gap-1 border-b border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-base font-bold text-slate-950">Exceptions</h2>
+          <p className="text-sm text-slate-500">
+            {totalTransactions.toLocaleString("en")} transaction{totalTransactions === 1 ? "" : "s"} marked as an exception
+          </p>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[900px] text-left text-sm">
+          <thead className="border-b border-slate-100 bg-slate-50 text-xs uppercase text-slate-500">
+            <tr>
+              <th className="px-4 py-3 font-semibold">Transaction</th>
+              <th className="px-4 py-3 font-semibold">Source</th>
+              <th className="px-4 py-3 font-semibold">Exception</th>
+              <th className="px-4 py-3 font-semibold">Action</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {transactions.map((transaction) => (
+              <tr key={transaction.id} className="align-top">
+                <td className="max-w-[320px] px-4 py-3">
+                  <p className="truncate font-medium text-slate-950">{transaction.description}</p>
+                  <p className="text-xs text-slate-500">
+                    {formatDate(transaction.transactionDate)} · {formatAmount(transaction.amount, transaction.currency)}
+                  </p>
+                </td>
+                <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatStatus(transaction.sourceType)}</td>
+                <td className="px-4 py-3">
+                  <Badge variant="destructive" className="gap-1">
+                    <AlertOctagon size={12} aria-hidden="true" />
+                    Exception
+                  </Badge>
+                  {transaction.exceptionReason ? (
+                    <p className="mt-2 text-xs text-slate-400">Reason: {transaction.exceptionReason}</p>
+                  ) : null}
+                  {transaction.exceptionMarkedAt ? (
+                    <p className="text-xs text-slate-400">
+                      Marked {formatDateTime(transaction.exceptionMarkedAt)}
+                      {transaction.exceptionMarkedBy ? ` by ${transaction.exceptionMarkedBy}` : ""}
+                    </p>
+                  ) : null}
+                </td>
+                <td className="px-4 py-3">
+                  {canClearException ? <ClearExceptionButton transactionId={transaction.id} /> : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="flex flex-col gap-3 border-t border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-sm text-slate-500">
+          Showing {firstResult.toLocaleString("en")} to {lastResult.toLocaleString("en")} of {totalTransactions.toLocaleString("en")} transactions
+        </p>
+        <div className="flex items-center gap-2">
+          <Button asChild variant="outline" className={page <= 1 ? "pointer-events-none opacity-50" : ""}>
+            <Link href={buildExceptionPageHref(currentParams, Math.max(1, page - 1))}>
+              <ChevronLeft size={16} aria-hidden="true" />
+              Previous
+            </Link>
+          </Button>
+          <span className="text-sm font-medium text-slate-700">
+            Page {Math.min(page, totalPages)} of {totalPages}
+          </span>
+          <Button asChild variant="outline" className={page >= totalPages ? "pointer-events-none opacity-50" : ""}>
+            <Link href={buildExceptionPageHref(currentParams, Math.min(totalPages, page + 1))}>
+              Next
+              <ChevronRight size={16} aria-hidden="true" />
+            </Link>
+          </Button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function TransactionTable({
   title,
   transactions,
@@ -341,6 +463,7 @@ function TransactionTable({
   page,
   currentParams,
   sourceType,
+  canMarkException,
 }: {
   title: string;
   transactions: TransactionRow[];
@@ -348,6 +471,7 @@ function TransactionTable({
   page: number;
   currentParams: URLSearchParams;
   sourceType: SourceType;
+  canMarkException: boolean;
 }) {
   const totalPages = Math.max(1, Math.ceil(totalTransactions / pageSize));
   const firstResult = totalTransactions === 0 ? 0 : (page - 1) * pageSize + 1;
@@ -375,6 +499,7 @@ function TransactionTable({
               <th className="px-4 py-3 font-semibold">Currency</th>
               <th className="px-4 py-3 font-semibold">Reference number</th>
               <th className="px-4 py-3 font-semibold">Status</th>
+              <th className="px-4 py-3 font-semibold">Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -400,11 +525,14 @@ function TransactionTable({
                     <p className="truncate text-slate-700">{transaction.reference ?? "No reference"}</p>
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatStatus(transaction.status)}</td>
+                  <td className="px-4 py-3">
+                    {canMarkException ? <MarkExceptionButton transactionId={transaction.id} /> : null}
+                  </td>
                 </tr>
               ))
             ) : (
               <tr>
-                <td colSpan={7} className="px-4 py-12 text-center">
+                <td colSpan={8} className="px-4 py-12 text-center">
                   <p className="text-sm font-semibold text-slate-900">No transactions found</p>
                   <p className="mt-1 text-sm text-slate-500">Adjust the filters or import transactions for this source.</p>
                 </td>
@@ -443,6 +571,7 @@ function TransactionTable({
 export default async function ReconciliationPage({ searchParams }: ReconciliationPageProps) {
   const session = await requirePermission("reconciliation.run");
   const canApprove = await hasPermission("reconciliation.approve");
+  const canEditTransactions = await hasPermission("transactions.edit");
   const resolvedSearchParams = (await searchParams) ?? {};
   const organizationId = session.organizationId;
   const {
@@ -469,6 +598,7 @@ export default async function ReconciliationPage({ searchParams }: Reconciliatio
   const orderBy = [{ transactionDate: "desc" }, { createdAt: "desc" }, { id: "desc" }] satisfies Prisma.TransactionOrderByWithRelationInput[];
   const matchPage = parsePage(firstParam(resolvedSearchParams.matchPage));
   const rejectedPage = parsePage(firstParam(resolvedSearchParams.rejectedPage));
+  const exceptionPage = parsePage(firstParam(resolvedSearchParams.exceptionPage));
   const transactionSummarySelect = {
     id: true,
     transactionDate: true,
@@ -488,6 +618,8 @@ export default async function ReconciliationPage({ searchParams }: Reconciliatio
     totalConfirmedMatches,
     rejectedMatches,
     totalRejectedMatches,
+    exceptionTransactions,
+    totalExceptionTransactions,
     unmatchedBankCandidates,
     unmatchedLedgerCandidates,
   ] = await Promise.all([
@@ -541,6 +673,24 @@ export default async function ReconciliationPage({ searchParams }: Reconciliatio
       },
     }),
     prisma.reconciliationMatch.count({ where: { organizationId, status: ReconciliationMatchStatus.REJECTED } }),
+    prisma.transaction.findMany({
+      where: { organizationId, status: TransactionStatus.EXCEPTION },
+      orderBy: [{ exceptionMarkedAt: "desc" }, { id: "desc" }],
+      skip: (exceptionPage - 1) * pageSize,
+      take: pageSize,
+      select: {
+        id: true,
+        transactionDate: true,
+        description: true,
+        amount: true,
+        currency: true,
+        sourceType: true,
+        exceptionReason: true,
+        exceptionMarkedBy: true,
+        exceptionMarkedAt: true,
+      },
+    }),
+    prisma.transaction.count({ where: { organizationId, status: TransactionStatus.EXCEPTION } }),
     prisma.transaction.findMany({
       where: { organizationId, sourceType: SourceType.BANK, status: TransactionStatus.UNMATCHED },
       orderBy: [{ transactionDate: "desc" }, { id: "desc" }],
@@ -718,6 +868,7 @@ export default async function ReconciliationPage({ searchParams }: Reconciliatio
             page={bankPage}
             currentParams={currentParams}
             sourceType={SourceType.BANK}
+            canMarkException={canEditTransactions}
           />
         ) : null}
 
@@ -729,6 +880,7 @@ export default async function ReconciliationPage({ searchParams }: Reconciliatio
             page={ledgerPage}
             currentParams={currentParams}
             sourceType={SourceType.LEDGER}
+            canMarkException={canEditTransactions}
           />
         ) : null}
       </ManualMatchProvider>
@@ -747,6 +899,14 @@ export default async function ReconciliationPage({ searchParams }: Reconciliatio
         totalMatches={totalRejectedMatches}
         page={rejectedPage}
         currentParams={currentParams}
+      />
+
+      <ExceptionTransactionsTable
+        transactions={exceptionTransactions}
+        totalTransactions={totalExceptionTransactions}
+        page={exceptionPage}
+        currentParams={currentParams}
+        canClearException={canEditTransactions}
       />
     </div>
   );
