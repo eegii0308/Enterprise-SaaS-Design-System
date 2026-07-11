@@ -79,6 +79,18 @@ Before relying on IP-based rate limiting in any non-Vercel deployment (a VM, con
 - That proxy must strip or overwrite any client-supplied `X-Forwarded-For`/`X-Real-IP` value and set it to the real connecting socket address before forwarding the request.
 - Verify this behavior for the specific proxy/platform in use -- the application has no way to detect or enforce it from inside the Node process, and a misconfigured proxy that passes the client's header through unchanged silently disables all IP-based rate limiting.
 
+Example nginx config that does this correctly:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Real-IP $remote_addr;
+}
+```
+
+`$remote_addr` is nginx's own view of the connecting socket, so this always overwrites whatever the client sent. Do not use the commonly-recommended `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` here: that variable *appends* the real client IP to any value already present on the incoming request rather than replacing it, so a client-supplied fake `X-Forwarded-For` stays first in the resulting comma-separated list -- and `getClientIp()` (`lib/rate-limit/ip.ts`) reads the *first* entry, so it would trust the attacker's fake value instead. The same applies to any other proxy or load balancer: confirm it replaces, not appends to, these headers.
+
 ### Never expose Next.js directly to the internet
 
 Never point a public DNS record directly at the Next.js process (`next start` or a bare Node server) without a trusted proxy in front of it. Without one, every IP-based limit in this app (`auth:login:ip`, `auth:register:ip`, `auth:forgot-password:ip`) can be bypassed by varying the `X-Forwarded-For` header per request.
