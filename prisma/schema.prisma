@@ -33,16 +33,17 @@ model Organization {
 }
 
 model User {
-  id              String       @id @default(cuid())
-  email           String       @unique
-  passwordHash    String       @map("password_hash")
-  fullName        String       @map("full_name")
-  status          UserStatus   @default(ACTIVE)
-  createdAt       DateTime     @default(now()) @map("created_at")
-  updatedAt       DateTime     @updatedAt @map("updated_at")
-  memberships     Membership[]
-  sentInvitations Invitation[]
-  sessions        Session[]
+  id                  String               @id @default(cuid())
+  email               String               @unique
+  passwordHash        String               @map("password_hash")
+  fullName            String               @map("full_name")
+  status              UserStatus           @default(ACTIVE)
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
+  memberships         Membership[]
+  sentInvitations     Invitation[]
+  sessions            Session[]
+  passwordResetTokens PasswordResetToken[]
 
   @@map("users")
 }
@@ -140,6 +141,19 @@ model Invitation {
   @@index([organizationId, status])
   @@index([email])
   @@map("invitations")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
 }
 
 model BankAccount {

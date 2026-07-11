@@ -7,10 +7,10 @@ import {
   type AcceptInvitationPrisma,
   type AcceptInvitationDependencies,
 } from "../lib/invitations/accept.ts";
-import { hashInvitationToken } from "../lib/security/tokens.ts";
+import { hashSecureToken } from "../lib/security/tokens.ts";
 
 const TOKEN = "test-token-raw-value";
-const TOKEN_HASH = hashInvitationToken(TOKEN);
+const TOKEN_HASH = hashSecureToken(TOKEN);
 
 type MockInvitation = {
   id: string;

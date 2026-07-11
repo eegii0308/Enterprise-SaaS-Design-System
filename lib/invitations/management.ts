@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../db/client.ts";
-import { generateInvitationToken, hashInvitationToken } from "../security/tokens.ts";
+import { generateSecureToken, hashSecureToken } from "../security/tokens.ts";
 import type { RoleName } from "../../types/permissions.ts";
 
 export type InvitationErrorCode = "VALIDATION" | "FORBIDDEN" | "CONFLICT" | "SERVER";
@@ -130,8 +130,8 @@ export async function createInvitation(
   const email = normalizeEmail(input.email);
   validateEmail(email);
 
-  const token = generateInvitationToken();
-  const tokenHash = hashInvitationToken(token);
+  const token = generateSecureToken();
+  const tokenHash = hashSecureToken(token);
   const now = new Date();
   const expiresAt = new Date(now.getTime() + INVITATION_TTL_MS);
 
@@ -300,8 +300,8 @@ export async function resendInvitation(
     throw new InvitationError("invitationId is required.", "VALIDATION");
   }
 
-  const token = generateInvitationToken();
-  const tokenHash = hashInvitationToken(token);
+  const token = generateSecureToken();
+  const tokenHash = hashSecureToken(token);
 
   return database.$transaction(async (tx) => {
     const invitation = await tx.invitation.findUnique({

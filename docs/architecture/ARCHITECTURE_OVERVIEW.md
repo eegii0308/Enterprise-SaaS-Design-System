@@ -23,19 +23,23 @@ Current production routes include:
 - `/login`
 - `/register`
 - `/forgot-password`
+- `/reset-password/[token]`
+- `/invite/[token]`
 - `/dashboard`
 - `/dashboard/imports`
 - `/dashboard/transactions`
 - `/dashboard/reconciliation`
+- `/dashboard/users`
 
 Server actions currently handle:
 
 - Login
 - First-admin registration
-- Forgot-password placeholder
+- Forgot-password request (`forgotPasswordAction`, `lib/auth/actions.ts`) and password reset completion (`resetPasswordAction`, `app/reset-password/[token]/actions.ts`)
 - Logout
 - Import upload
 - Manual reconciliation match creation
+- User invitations: invite/cancel/resend, member role change, disable/reactivate (`app/dashboard/users/actions.ts`) and invitation acceptance (`app/invite/[token]/actions.ts`)
 
 ## App Router Structure
 
@@ -192,9 +196,7 @@ Files:
 
 - Prototype and production app are still both present.
 - Some planned routes in navigation do not yet have implemented pages.
-- Password reset is not implemented beyond placeholder response.
-- Rate limiting is missing.
-- Tenant foreign key migrations require repair and validation.
+- Rate limiting is missing for login, registration, and forgot-password requests (invitation resend has a 60s per-invitation cooldown, `lib/invitations/management.ts`, but this is not a general rate limiter).
 - Test configuration does not currently run all tests successfully.
 
 ## Future Improvements

@@ -1,3 +1,5 @@
+import { escapeHtml } from "../html.ts";
+
 export type InvitationEmailInput = {
   organizationName: string;
   roleLabel: string;
@@ -38,13 +40,4 @@ export function buildInvitationEmail(input: InvitationEmailInput) {
   `;
 
   return { subject, text, html };
-}
-
-function escapeHtml(value: string) {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
 }

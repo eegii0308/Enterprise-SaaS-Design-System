@@ -98,7 +98,6 @@ Next planned work: review notes on exceptions/unresolved records; automated matc
 
 - AI assistant execution.
 - Billing enforcement.
-- Invitation workflows unless required by launch policy.
 - MFA implementation unless required by launch policy.
 - Custom roles and permission editing.
 - SSO/SAML.

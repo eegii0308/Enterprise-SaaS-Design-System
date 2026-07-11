@@ -63,8 +63,8 @@ Tasks:
 - [x] Add server-side authorization helpers.
 - [x] Establish organization context for protected sessions and future data access.
 - [x] Add fixed MVP roles: Admin, Finance Manager, Accountant, Auditor, Viewer.
-- [ ] Add admin-created user or membership flow if needed for launch.
-- [ ] Complete password reset token, email, and new-password flow.
+- [x] Add admin-created user or membership flow if needed for launch. (Email invitation flow, not direct admin-created accounts; see `docs/security/AUTHENTICATION_AND_AUTHORIZATION.md`.)
+- [x] Complete password reset token, email, and new-password flow.
 - [ ] Add automated tests for session guards, membership access, organization scoping, and role permissions.
 
 Dependencies:
@@ -402,7 +402,6 @@ Minimum MVP coverage:
 ## Deferred From MVP
 
 - MFA implementation unless required by launch policy.
-- Invitation acceptance unless manual admin-created users are not acceptable.
 - Custom roles and permission editing.
 - Billing screens and enforcement.
 - AI assistant execution.

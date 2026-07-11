@@ -47,6 +47,41 @@ Known limitation:
 
 - Multi-organization membership selection is not implemented.
 
+### Password reset
+
+Files: `lib/auth/password-reset.ts`, `lib/auth/actions.ts`, `app/reset-password/[token]/`
+
+Request (`forgotPasswordAction`):
+
+1. Validates the submitted email format.
+2. Looks up the user; if not found or not `ACTIVE`, does nothing further.
+3. If found, invalidates any earlier outstanding reset tokens for that user, creates a new one, and writes a `PASSWORD_RESET_REQUESTED` audit log (skipped if the user has no active membership, since `AuditLog.organizationId` is required).
+4. Sends a reset email (best-effort; failures are swallowed).
+5. Always returns the same generic success message, regardless of whether the email matched a real account or the email actually sent — this is the enumeration-safety boundary.
+
+Completion (`resetPasswordAction`):
+
+1. Hashes the submitted token and looks up the matching `PasswordResetToken`; rejects if not found, already used, or expired (`INVALID_TOKEN`).
+2. Rejects a password under 8 characters (`VALIDATION`).
+3. Updates the user's password hash, marks the token used, and invalidates any other outstanding tokens for the same user.
+4. Revokes every active session for the user (mirrors `clearSession()`'s revocation), forcing re-authentication everywhere.
+5. Writes a `PASSWORD_RESET_COMPLETED` audit log (same organization-membership caveat as above).
+6. Redirects to `/login?reset=success` (no auto-login, unlike invitation acceptance — a password reset intentionally requires a fresh login with the new password).
+
+Token: 256-bit random value (`lib/security/tokens.ts`, shared with the invitation token implementation), SHA-256 hash stored, 1-hour expiry (deliberately much shorter than the 7-day invitation TTL, since this token grants control over an existing account).
+
+### Invitation acceptance
+
+Files: `lib/invitations/management.ts`, `lib/invitations/accept.ts`, `app/dashboard/users/`, `app/invite/[token]/`
+
+An `ADMIN` (the only role with `users.manage`) invites a user by email from `/dashboard/users`. Scope is intentionally limited to brand-new users only: an email that already has a `User` account in a *different* organization is rejected, because `createSessionForUser` (`lib/auth/actions.ts`) requires exactly one active membership and there is no multi-organization/session-switching support. Re-inviting an email with a `DISABLED` membership in the *same* organization is supported (reactivation).
+
+Token: same 256-bit/SHA-256 scheme as password reset, 7-day expiry, single-row rotation on resend. Accepting creates the `User` (new-invite branch) or verifies the existing password (reactivation branch), creates/activates the `Membership`, marks the invitation `ACCEPTED`, writes an `INVITATION_ACCEPTED` audit log, and creates a session (auto-login), unlike password reset.
+
+Known limitation:
+
+- No rate limiting on invite/resend beyond a 60-second per-invitation resend cooldown.
+
 ### Logout
 
 File: `lib/auth/session.ts`
@@ -126,18 +161,13 @@ Current protected surfaces:
 - Imports page and upload action require `imports.create`.
 - Transactions page requires `transactions.view`.
 - Reconciliation page and manual match action require `reconciliation.run`.
+- Users page and invite/cancel/resend/role-change/disable/reactivate actions require `users.manage` (`ADMIN` only).
 
 Known limitation:
 
 - Dashboard overview currently requires only a session while showing transaction metrics and recent audit log snippets.
 
 ## Known Limitations
-
-### Password reset placeholder
-
-File: `lib/auth/actions.ts`
-
-Forgot-password validates the email and returns a generic success message. It does not create a token, send an email, or complete reset flow.
 
 ### Missing rate limiting
 
@@ -146,6 +176,7 @@ There is no visible rate limiting for:
 - Login
 - Registration
 - Forgot password
+- Invitation send (resend has only a 60-second per-invitation cooldown, not a general limiter)
 - Uploads
 - Future exports
 - Future sensitive mutations
@@ -159,10 +190,6 @@ There is no visible rate limiting for:
 First-admin registration should be protected from concurrent bootstrap races and unintended public access after setup.
 
 ## Future Improvements
-
-### Password reset tokens
-
-Add single-use reset tokens with expiry, secure storage, email delivery, audit events, and rate limits.
 
 ### MFA decision
 

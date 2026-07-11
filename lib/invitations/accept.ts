@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { hashInvitationToken } from "../security/tokens.ts";
+import { hashSecureToken } from "../security/tokens.ts";
 import type { RoleName } from "../../types/permissions.ts";
 
 export type InvitationAcceptErrorCode = "INVALID_TOKEN" | "VALIDATION" | "CONFLICT" | "INVALID_CREDENTIALS" | "SERVER";
@@ -75,7 +75,7 @@ export type InvitationPreview =
   | { valid: false };
 
 export async function lookupInvitationByToken(token: string, prisma: AcceptInvitationPrisma): Promise<InvitationPreview> {
-  const tokenHash = hashInvitationToken(token);
+  const tokenHash = hashSecureToken(token);
 
   const invitation = await prisma.invitation.findUnique({
     where: { tokenHash },
@@ -129,7 +129,7 @@ export async function acceptInvitation(
     throw new InvitationAcceptError("Password must be at least 8 characters.", "VALIDATION");
   }
 
-  const tokenHash = hashInvitationToken(input.token);
+  const tokenHash = hashSecureToken(input.token);
 
   return deps.prisma.$transaction(async (tx) => {
     const invitation = await tx.invitation.findUnique({

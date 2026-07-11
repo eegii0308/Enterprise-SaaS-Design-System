@@ -55,10 +55,10 @@ Authentication may be implemented through provider SDKs, but the app needs these
 - Register organization owner.
 - Forgot password.
 - Reset password.
+- Accept invitation.
 
 Deferred unless required by launch policy:
 
-- Accept invitation.
 - Verify MFA.
 
 ### Dashboard

@@ -32,10 +32,18 @@ Forgot password:
 4. User creates a new password.
 5. User signs in again.
 
+Invitation acceptance:
+
+1. Admin invites a user by email and role from Users.
+2. System emails a one-time link (7-day expiry) via Resend.
+3. New user opens the link, sets a full name and password (email is fixed to the invitation).
+4. System creates the account and an active membership, and signs the user in.
+5. Re-inviting a disabled member's email in the same organization reactivates them (existing password, no new account).
+
 MVP decision:
 
 - MFA implementation is deferred unless required by launch policy.
-- Invitation acceptance is deferred if manual admin-created users are acceptable for first launch.
+- Inviting an email that already belongs to a different organization is not supported (single-organization membership only; see Section 12).
 
 ## 3. Organization Setup Flow
 
@@ -225,10 +233,10 @@ Tracked actions:
 Admin flow:
 
 1. Admin opens Users.
-2. Admin creates or activates a user membership.
-3. Admin assigns one fixed system role.
-4. System records the role assignment audit log.
-5. User signs in and accesses permitted areas.
+2. Admin invites a user by email and role, or reactivates a disabled member by re-inviting their email.
+3. Admin changes an active member's role or disables/reactivates a member as needed.
+4. System records an audit log for each of these actions and enforces that the organization always keeps at least one active Admin.
+5. Invited user accepts (see Section 2) and accesses permitted areas.
 
 MVP roles:
 
@@ -240,7 +248,6 @@ MVP roles:
 
 Deferred:
 
-- Invitation acceptance workflow unless required by launch policy.
 - Custom role and permission editing.
 
 ## 13. Error Handling Flow
@@ -279,7 +286,7 @@ Complete business workflow:
 Not MVP:
 
 - MFA implementation unless required by launch policy.
-- Invitation acceptance unless required by launch policy.
+- Multi-organization membership / org switching (a user can belong to exactly one organization; see Section 12).
 - Direct bank connection.
 - AI assistant execution.
 - OCR invoice scanning.

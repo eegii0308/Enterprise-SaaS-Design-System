@@ -30,6 +30,9 @@ Current code writes audit logs for:
 - Reconciliation run submission for review (`RECONCILIATION_RUN_SUBMITTED`) in `lib/reconciliation/run-lifecycle.ts`
 - Reconciliation run approval (`RECONCILIATION_RUN_APPROVED`) in `lib/reconciliation/run-lifecycle.ts`
 - Reconciliation run reopening (`RECONCILIATION_RUN_REOPENED`) in `lib/reconciliation/run-lifecycle.ts`
+- Invitation sent, resent, cancelled, and accepted (`INVITATION_SENT`/`_RESENT`/`_CANCELLED`/`_ACCEPTED`) in `lib/invitations/management.ts` and `lib/invitations/accept.ts`
+- Member role change, disable, and reactivation (`MEMBER_ROLE_CHANGED`/`MEMBER_DISABLED`/`MEMBER_REACTIVATED`) in `lib/members/management.ts`
+- Password reset requested and completed (`PASSWORD_RESET_REQUESTED`/`PASSWORD_RESET_COMPLETED`) in `lib/auth/password-reset.ts` -- skipped for a user with no active membership, since `AuditLog.organizationId` is required
 
 ## Current Limitations
 
@@ -48,6 +51,7 @@ Every material financial or security-sensitive action should write an audit even
 Required event categories:
 
 - Authentication and session events.
+- User invitation and membership management events.
 - Import lifecycle events.
 - Transaction correction events.
 - Transaction review note events.
