@@ -255,7 +255,8 @@ Tasks:
 - Store report metadata and tenant-scoped file keys.
 - Add report history.
 - Add secure download URLs for permitted users.
-- Write audit events for report generation and export.
+- Write audit events for report generation and export. (Phase 10B: every download -- CSV, PDF, or XLSX, including repeat downloads of an already-exported report -- now writes its own `REPORT_DOWNLOADED` audit event, not just the initial generation step.)
+- Add PDF and XLSX export alongside CSV. (Phase 10B: added via a shared presentation-model layer, `lib/reports/render/reconciliation-summary.ts`, so all three formats stay consistent with each other and with the underlying tie-out/approval calculations -- see `docs/operations/CHANGELOG.md`.)
 
 Dependencies:
 

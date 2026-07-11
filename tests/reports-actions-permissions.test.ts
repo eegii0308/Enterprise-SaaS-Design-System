@@ -91,6 +91,9 @@ function createDatabase(): ReportGenerationDatabase & { findManyCallCount: numbe
       async count() {
         return 0;
       },
+      async findMany() {
+        return [];
+      },
     },
     bankAccount: {
       async findMany() {

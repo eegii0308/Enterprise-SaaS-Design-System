@@ -239,12 +239,30 @@ export default async function ReportsPage({ searchParams }: ReportsPageProps) {
                     <td className="px-4 py-3 text-slate-500">{formatDateTime(report.createdAt)}</td>
                     <td className="px-4 py-3">
                       {canExport && report.status === ReportStatus.READY && report.fileStorageKey ? (
-                        <Button asChild variant="outline" size="sm" className="gap-2">
-                          <a href={`/api/reports/${report.id}/download`}>
-                            <Download size={14} aria-hidden="true" />
-                            CSV
-                          </a>
-                        </Button>
+                        <div className="flex flex-wrap gap-2">
+                          <Button asChild variant="outline" size="sm" className="gap-2">
+                            <a href={`/api/reports/${report.id}/download?format=csv`}>
+                              <Download size={14} aria-hidden="true" />
+                              CSV
+                            </a>
+                          </Button>
+                          {report.reportType === ReportType.RECONCILIATION_SUMMARY ? (
+                            <>
+                              <Button asChild variant="outline" size="sm" className="gap-2">
+                                <a href={`/api/reports/${report.id}/download?format=pdf`}>
+                                  <Download size={14} aria-hidden="true" />
+                                  PDF
+                                </a>
+                              </Button>
+                              <Button asChild variant="outline" size="sm" className="gap-2">
+                                <a href={`/api/reports/${report.id}/download?format=xlsx`}>
+                                  <Download size={14} aria-hidden="true" />
+                                  XLSX
+                                </a>
+                              </Button>
+                            </>
+                          ) : null}
+                        </div>
                       ) : (
                         <span className="text-xs text-slate-400">-</span>
                       )}

@@ -79,6 +79,7 @@ Next planned work: review notes on exceptions/unresolved records; automated matc
 - Implement exception report.
 - Implement unmatched transaction report.
 - Add secure report export and report history.
+- Add PDF and XLSX export. (Phase 10B: `lib/reports/exporters/{pdf,xlsx}.ts`, both consuming the same presentation model as the CSV export -- no report calculation exists in more than one place across the three formats. Reused the existing `reports.export` permission and download route; no new permission was introduced.)
 
 ## Phase 7: Matching Rules
 

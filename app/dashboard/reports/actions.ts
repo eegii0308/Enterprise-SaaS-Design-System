@@ -7,7 +7,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db/client";
 import { requirePermission } from "@/lib/permissions/authorize";
 import { generateReportTable, ReportGenerationError } from "@/lib/reports/generation";
-import { serializeReportTableToCsv } from "@/lib/reports/csv-writer";
+import { serializeReportTableToCsv } from "@/lib/reports/exporters/csv";
 import { getReportStoragePath } from "@/lib/reports/storage";
 
 export type GenerateReportExportState =
