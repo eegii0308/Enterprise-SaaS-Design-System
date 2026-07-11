@@ -76,12 +76,13 @@ model Membership {
   createdAt      DateTime         @default(now()) @map("created_at")
   updatedAt      DateTime         @updatedAt @map("updated_at")
   organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  role           Role             @relation(fields: [roleId], references: [id])
+  role           Role             @relation(fields: [organizationId, roleId], references: [organizationId, id], onDelete: Restrict, onUpdate: Cascade)
   sessions       Session[]
   user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   invitations    Invitation[]
 
   @@unique([organizationId, userId])
+  @@unique([organizationId, id])
   @@index([userId])
   @@map("memberships")
 }
@@ -100,6 +101,7 @@ model Role {
   invitations    Invitation[]
 
   @@unique([organizationId, name])
+  @@unique([organizationId, id])
   @@map("roles")
 }
 
@@ -129,9 +131,9 @@ model Invitation {
   createdAt       DateTime         @default(now()) @map("created_at")
   updatedAt       DateTime         @updatedAt @map("updated_at")
   organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  role            Role             @relation(fields: [roleId], references: [id])
+  role            Role             @relation(fields: [organizationId, roleId], references: [organizationId, id], onDelete: Restrict, onUpdate: Cascade)
   invitedBy       User             @relation(fields: [invitedByUserId], references: [id])
-  membership      Membership?      @relation(fields: [membershipId], references: [id])
+  membership      Membership?      @relation(fields: [organizationId, membershipId], references: [organizationId, id], onDelete: NoAction, onUpdate: Cascade)
 
   // A partial unique index on (organization_id, email) WHERE status = 'PENDING'
   // also exists (see the invitations migration) to prevent duplicate concurrent
@@ -170,6 +172,7 @@ model BankAccount {
   transactions        Transaction[]
   reconciliationRuns  ReconciliationRun[]
 
+  @@unique([organizationId, id])
   // A partial unique index on (organization_id, bank_name, masked_account_number)
   // WHERE status = 'active' also exists (added in migration
   // 20260710050000_phase_7d_bank_account_management) to prevent duplicate
@@ -229,12 +232,13 @@ model ImportRow {
   searchText           String          @default("") @map("search_text")
   createdTransactionId String?         @unique @map("created_transaction_id")
   createdAt            DateTime        @default(now()) @map("created_at")
-  createdTransaction   Transaction?    @relation("CreatedTransaction", fields: [createdTransactionId], references: [id])
-  importBatch          ImportBatch     @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+  createdTransaction   Transaction?    @relation("CreatedTransaction", fields: [organizationId, createdTransactionId], references: [organizationId, id], onDelete: NoAction, onUpdate: Cascade)
+  importBatch          ImportBatch     @relation(fields: [organizationId, importBatchId], references: [organizationId, id], onDelete: Cascade, onUpdate: Cascade)
   organization         Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@unique([organizationId, importBatchId, rowNumber])
   @@unique([organizationId, rowHash])
+  @@unique([organizationId, createdTransactionId])
   @@index([organizationId, importBatchId, validationStatus])
   @@map("import_rows")
 }
@@ -267,11 +271,12 @@ model Transaction {
   ledgerMatches       ReconciliationMatch[]   @relation("LedgerTransaction")
   adjustments         TransactionAdjustment[]
   notes               TransactionReviewNote[]
-  bankAccount         BankAccount?            @relation(fields: [bankAccountId], references: [id])
+  bankAccount         BankAccount?            @relation(fields: [organizationId, bankAccountId], references: [organizationId, id], onDelete: NoAction, onUpdate: Cascade)
   importBatch         ImportBatch?            @relation(fields: [organizationId, importBatchId], references: [organizationId, id], onDelete: NoAction, onUpdate: Cascade)
   organization        Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@unique([organizationId, externalFingerprint])
+  @@unique([organizationId, id])
   @@index([organizationId, status])
   @@index([organizationId, sourceType, status, transactionDate])
   @@index([organizationId, importBatchId])
@@ -287,7 +292,7 @@ model TransactionReviewNote {
   createdBy      String       @map("created_by")
   createdAt      DateTime     @default(now()) @map("created_at")
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  transaction    Transaction  @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  transaction    Transaction  @relation(fields: [organizationId, transactionId], references: [organizationId, id], onDelete: Cascade, onUpdate: Cascade)
 
   @@index([organizationId, transactionId])
   @@map("transaction_review_notes")
@@ -304,7 +309,7 @@ model TransactionAdjustment {
   createdBy      String       @map("created_by")
   createdAt      DateTime     @default(now()) @map("created_at")
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  transaction    Transaction  @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  transaction    Transaction  @relation(fields: [organizationId, transactionId], references: [organizationId, id], onDelete: Cascade, onUpdate: Cascade)
 
   @@map("transaction_adjustments")
 }
@@ -326,8 +331,9 @@ model ReconciliationRun {
   completedAt    DateTime?               @map("completed_at")
   matches        ReconciliationMatch[]
   organization   Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  bankAccount    BankAccount             @relation(fields: [bankAccountId], references: [id])
+  bankAccount    BankAccount             @relation(fields: [organizationId, bankAccountId], references: [organizationId, id], onDelete: Restrict, onUpdate: Cascade)
 
+  @@unique([organizationId, id])
   @@index([organizationId, status])
   @@index([organizationId, bankAccountId, status], map: "reconciliation_runs_organization_bank_account_status_idx")
   @@map("reconciliation_runs")
@@ -351,13 +357,14 @@ model ReconciliationMatch {
   rejectedBy           String?                   @map("rejected_by")
   rejectedAt           DateTime?                 @map("rejected_at")
   rejectionReason      String?                   @map("rejection_reason")
-  bankTransaction      Transaction               @relation("BankTransaction", fields: [bankTransactionId], references: [id])
-  ledgerTransaction    Transaction               @relation("LedgerTransaction", fields: [ledgerTransactionId], references: [id])
+  bankTransaction      Transaction               @relation("BankTransaction", fields: [organizationId, bankTransactionId], references: [organizationId, id], onDelete: Restrict, onUpdate: Cascade)
+  ledgerTransaction    Transaction               @relation("LedgerTransaction", fields: [organizationId, ledgerTransactionId], references: [organizationId, id], onDelete: Restrict, onUpdate: Cascade)
   organization         Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  reconciliationRun    ReconciliationRun         @relation(fields: [reconciliationRunId], references: [id], onDelete: Cascade)
-  correctedFromMatch   ReconciliationMatch?      @relation("MatchCorrection", fields: [correctedFromMatchId], references: [id])
+  reconciliationRun    ReconciliationRun         @relation(fields: [organizationId, reconciliationRunId], references: [organizationId, id], onDelete: Cascade, onUpdate: Cascade)
+  correctedFromMatch   ReconciliationMatch?      @relation("MatchCorrection", fields: [organizationId, correctedFromMatchId], references: [organizationId, id], onDelete: NoAction, onUpdate: Cascade)
   correctedByMatches   ReconciliationMatch[]     @relation("MatchCorrection")
 
+  @@unique([organizationId, id])
   @@index([organizationId, reconciliationRunId])
   @@map("reconciliation_matches")
 }
