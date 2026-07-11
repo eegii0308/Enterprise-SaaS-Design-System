@@ -12,7 +12,7 @@ import { GenerateReportButton } from "./ReportActions";
 const historyPageSize = 10;
 
 const reportTypeLabels: Record<ReportType, string> = {
-  RECONCILIATION_SUMMARY: "Reconciliation summary",
+  RECONCILIATION_SUMMARY: "Financial reconciliation report",
   EXCEPTION_LIST: "Exception list",
   UNMATCHED_TRANSACTIONS: "Unmatched transactions",
 };
@@ -172,7 +172,7 @@ export default async function ReportsPage({ searchParams }: ReportsPageProps) {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] text-left text-sm">
+          <table className={`w-full text-left text-sm ${reportType === ReportType.RECONCILIATION_SUMMARY ? "min-w-[2400px]" : "min-w-[900px]"}`}>
             <thead className="border-b border-slate-100 bg-slate-50 text-xs uppercase text-slate-500">
               <tr>
                 {table.headers.map((header) => (

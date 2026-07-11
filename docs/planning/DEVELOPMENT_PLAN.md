@@ -249,7 +249,7 @@ Purpose: complete the import-to-report MVP cycle.
 
 Tasks:
 
-- Generate reconciliation summary report.
+- Generate reconciliation summary report. (Upgraded from a match-count summary to a true financial reconciliation report -- see `docs/operations/CHANGELOG.md`.)
 - Generate exception list report.
 - Generate unmatched transaction report.
 - Store report metadata and tenant-scoped file keys.

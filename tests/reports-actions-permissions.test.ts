@@ -46,6 +46,13 @@ function assertPermission(role: RoleName, permission: string) {
 
 const context = { organizationId: "org-1" };
 
+// None of these tests exercise RECONCILIATION_SUMMARY (they all use
+// UNMATCHED_TRANSACTIONS), so reconciliationRun.findUnique,
+// transaction.aggregate/count, transactionAdjustment.count,
+// bankAccount.findMany, user.findMany, and auditLog.findMany -- only needed
+// by the financial reconciliation report path -- are never actually called;
+// they exist solely so this mock structurally satisfies
+// ReportGenerationDatabase.
 function createDatabase(): ReportGenerationDatabase & { findManyCallCount: number } {
   const state = { findManyCallCount: 0 };
 
@@ -58,6 +65,9 @@ function createDatabase(): ReportGenerationDatabase & { findManyCallCount: numbe
         state.findManyCallCount += 1;
         return [];
       },
+      async findUnique() {
+        return null;
+      },
     },
     reconciliationMatch: {
       async findMany() {
@@ -68,6 +78,32 @@ function createDatabase(): ReportGenerationDatabase & { findManyCallCount: numbe
     transaction: {
       async findMany() {
         state.findManyCallCount += 1;
+        return [];
+      },
+      async aggregate() {
+        return { _sum: { amount: null, creditAmount: null, debitAmount: null } };
+      },
+      async count() {
+        return 0;
+      },
+    },
+    transactionAdjustment: {
+      async count() {
+        return 0;
+      },
+    },
+    bankAccount: {
+      async findMany() {
+        return [];
+      },
+    },
+    user: {
+      async findMany() {
+        return [];
+      },
+    },
+    auditLog: {
+      async findMany() {
         return [];
       },
     },

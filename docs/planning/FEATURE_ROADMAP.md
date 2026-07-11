@@ -75,7 +75,7 @@ Next planned work: review notes on exceptions/unresolved records; automated matc
 
 ## Phase 6: Reports
 
-- Implement reconciliation summary report.
+- Implement reconciliation summary report. (Phase 10A: replaced with a true financial reconciliation report -- opening/closing balances, variance, matched/unmatched/exception amounts, and an operational section -- per run, reusing the existing tie-out and approval-readiness services rather than a raw match count.)
 - Implement exception report.
 - Implement unmatched transaction report.
 - Add secure report export and report history.

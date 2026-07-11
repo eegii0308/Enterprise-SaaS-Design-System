@@ -1,5 +1,7 @@
-import { ReconciliationMatchStatus, ReportType, TransactionStatus, type SourceType } from "@prisma/client";
+import { ReportType, TransactionStatus, type Prisma, type SourceType } from "@prisma/client";
 import { prisma } from "../db/client.ts";
+import { calculateReconciliationTieOut } from "../reconciliation/tie-out-summary.ts";
+import { evaluateApprovalReadiness, type ApprovalValidationDatabase } from "../reconciliation/approval-validation.ts";
 
 export type ReportGenerationErrorCode = "VALIDATION" | "SERVER";
 
@@ -28,20 +30,31 @@ export type GenerateReportContext = {
   organizationId: string;
 };
 
-type RunRecord = {
+type RunListRecord = {
   id: string;
-  name: string;
   periodStart: Date;
   periodEnd: Date;
   status: string;
+  bankAccountId: string;
+  createdBy: string;
   createdAt: Date;
+  approvedBy: string | null;
   approvedAt: Date | null;
+  organization: { name: string };
 };
 
-type MatchRecord = {
-  reconciliationRunId: string;
-  status: ReconciliationMatchStatus;
-};
+type BankAccountNameRecord = { id: string; name: string };
+type UserNameRecord = { id: string; fullName: string };
+type ApprovalAuditLogRecord = { resourceId: string | null; metadata: unknown };
+
+type DecimalLike = Prisma.Decimal | number | string;
+
+// Must include `amount` (not just the new creditAmount/debitAmount fields)
+// so this is a strict superset of ApprovalValidationDatabase["transaction"]'s
+// own aggregate() return type -- TypeScript only resolves an intersection of
+// two same-named methods to the more specific one when it's an actual
+// subtype of the other, not merely overlapping.
+type DecimalAggregateResult = { _sum: { amount: DecimalLike | null; creditAmount: DecimalLike | null; debitAmount: DecimalLike | null } };
 
 type ReportTransactionRecord = {
   id: string;
@@ -57,15 +70,47 @@ type ReportTransactionRecord = {
   exceptionMarkedAt?: Date | null;
 };
 
+// Composes the tie-out and approval-readiness database contracts (rather than
+// redeclaring reconciliationRun.findUnique/transaction.aggregate/
+// reconciliationMatch.findMany/transaction.count) so calculateReconciliationTieOut
+// and evaluateApprovalReadiness can be called directly with the same
+// `database` this module receives -- no separate calculation logic is
+// reimplemented here for figures those services already compute.
+//
+// `transaction` and `reconciliationRun` are declared as fresh, standalone
+// types (not `ApprovalValidationDatabase["transaction"] & { ... }`) because
+// intersecting two signatures for the *same* method name (aggregate here)
+// does not resolve to the more specific one in TypeScript, even when one is
+// a strict subtype of the other -- it silently keeps the first-declared,
+// narrower signature. Declaring the full method set once, as a type that
+// happens to be assignable to ApprovalValidationDatabase's shape, avoids
+// that trap entirely.
+type ReportRunClient = {
+  findUnique: ApprovalValidationDatabase["reconciliationRun"]["findUnique"];
+  findMany(args: unknown): Promise<RunListRecord[]>;
+};
+
+type ReportTransactionClient = {
+  aggregate(args: unknown): Promise<DecimalAggregateResult>;
+  count: ApprovalValidationDatabase["transaction"]["count"];
+  findMany(args: unknown): Promise<ReportTransactionRecord[]>;
+};
+
 export type ReportGenerationDatabase = {
-  reconciliationRun: {
-    findMany(args: unknown): Promise<RunRecord[]>;
+  reconciliationRun: ReportRunClient;
+  reconciliationMatch: ApprovalValidationDatabase["reconciliationMatch"];
+  transaction: ReportTransactionClient;
+  transactionAdjustment: {
+    count(args: unknown): Promise<number>;
   };
-  reconciliationMatch: {
-    findMany(args: unknown): Promise<MatchRecord[]>;
+  bankAccount: {
+    findMany(args: unknown): Promise<BankAccountNameRecord[]>;
   };
-  transaction: {
-    findMany(args: unknown): Promise<ReportTransactionRecord[]>;
+  user: {
+    findMany(args: unknown): Promise<UserNameRecord[]>;
+  };
+  auditLog: {
+    findMany(args: unknown): Promise<ApprovalAuditLogRecord[]>;
   };
 };
 
@@ -87,7 +132,84 @@ function formatDateOnly(date: Date) {
   return date.toISOString().slice(0, 10);
 }
 
-async function buildReconciliationSummaryTable(
+function toDecimalString(value: unknown) {
+  if (value === null || value === undefined) {
+    return "0.00";
+  }
+
+  const decimal = value as { toFixed(digits: number): string };
+  return decimal.toFixed(2);
+}
+
+const financialReportHeaders = [
+  "Organization",
+  "Bank Account",
+  "Period Start",
+  "Period End",
+  "Run Status",
+  "Prepared By",
+  "Approved By",
+  "Preparation Date",
+  "Approval Date",
+  "Opening Balance",
+  "Total Deposits",
+  "Total Withdrawals",
+  "Bank Closing Balance",
+  "Ledger Closing Balance",
+  "Variance",
+  "Matched Amount",
+  "Unmatched Bank Amount",
+  "Unmatched Ledger Amount",
+  "Exception Amount",
+  "Outstanding Exceptions",
+  "Outstanding Transactions",
+  "Adjustment Count",
+  "Approval Summary",
+] as const;
+
+function buildApprovalSummary(
+  run: RunListRecord,
+  hasOutstandingItems: boolean,
+  approvalAudit: ApprovalAuditLogRecord | undefined,
+) {
+  if (run.status === "APPROVED" || run.status === "REOPENED") {
+    const metadata = approvalAudit?.metadata as
+      | { approvalReason?: string | null; overrodeOutstandingItems?: boolean }
+      | null
+      | undefined;
+
+    if (metadata?.overrodeOutstandingItems) {
+      return `Approved with outstanding items overridden: ${metadata.approvalReason ?? "no reason recorded"}`;
+    }
+
+    return "Approved clean, no outstanding items at approval time.";
+  }
+
+  return hasOutstandingItems
+    ? "Not yet approved: outstanding items pending."
+    : "Not yet approved: no outstanding items, ready for approval.";
+}
+
+/**
+ * Builds one row per reconciliation run overlapping the report period, using
+ * calculateReconciliationTieOut (bank/ledger totals, matched/unmatched/
+ * exception amounts, variance) and evaluateApprovalReadiness (outstanding
+ * counts, approval readiness) for every figure those services already
+ * compute -- this function adds only what neither of them does: total
+ * deposits/withdrawals, adjustment counts, and user/bank-account/audit-log
+ * lookups for display.
+ *
+ * "Opening balance" is always 0: this system reconciles transaction activity
+ * within a period rather than tracking an absolute running account balance
+ * (no balance field exists anywhere in the schema), so "closing balance" is
+ * reported as the period's net movement -- which is exactly
+ * calculateReconciliationTieOut's bank/ledger transaction total, since
+ * amount = creditAmount - debitAmount for every transaction (see
+ * lib/imports/csv-core.ts and lib/transactions/adjustment.ts). Total
+ * deposits/withdrawals are the only genuinely new aggregate here (tie-out
+ * only sums the net `amount`, never separates credit from debit).
+ */
+async function buildFinancialReconciliationReportTable(
   input: GenerateReportInput,
   context: GenerateReportContext,
   database: ReportGenerationDatabase,
@@ -98,65 +220,119 @@ async function buildReconciliationSummaryTable(
       periodStart: { lte: input.periodEnd },
       periodEnd: { gte: input.periodStart },
     },
-    select: { id: true, name: true, periodStart: true, periodEnd: true, status: true, createdAt: true, approvedAt: true },
+    select: {
+      id: true,
+      periodStart: true,
+      periodEnd: true,
+      status: true,
+      bankAccountId: true,
+      createdBy: true,
+      createdAt: true,
+      approvedBy: true,
+      approvedAt: true,
+      organization: { select: { name: true } },
+    },
     orderBy: { periodStart: "asc" },
   });
 
-  const runIds = runs.map((run) => run.id);
-
-  const matches = runIds.length
-    ? await database.reconciliationMatch.findMany({
-        where: { organizationId: context.organizationId, reconciliationRunId: { in: runIds } },
-        select: { reconciliationRunId: true, status: true },
-      })
-    : [];
-
-  const matchCountsByRun = new Map<string, Record<ReconciliationMatchStatus, number>>();
-
-  for (const match of matches) {
-    const counts = matchCountsByRun.get(match.reconciliationRunId) ?? {
-      PROPOSED: 0,
-      CONFIRMED: 0,
-      REJECTED: 0,
-      REMOVED: 0,
-    };
-    counts[match.status] += 1;
-    matchCountsByRun.set(match.reconciliationRunId, counts);
+  if (runs.length === 0) {
+    return { headers: financialReportHeaders, rows: [] };
   }
 
-  const rows = runs.map((run) => {
-    const counts = matchCountsByRun.get(run.id) ?? { PROPOSED: 0, CONFIRMED: 0, REJECTED: 0, REMOVED: 0 };
-    const totalMatches = counts.PROPOSED + counts.CONFIRMED + counts.REJECTED + counts.REMOVED;
+  const bankAccountIds = [...new Set(runs.map((run) => run.bankAccountId))];
+  const userIds = [
+    ...new Set(runs.flatMap((run) => [run.createdBy, run.approvedBy].filter((id): id is string => Boolean(id)))),
+  ];
+  const runIds = runs.map((run) => run.id);
 
-    return [
-      run.name,
-      formatDateOnly(run.periodStart),
-      formatDateOnly(run.periodEnd),
-      run.status,
-      String(counts.CONFIRMED),
-      String(counts.REJECTED),
-      String(counts.REMOVED),
-      String(totalMatches),
-      run.createdAt.toISOString(),
-      run.approvedAt ? run.approvedAt.toISOString() : "",
-    ];
-  });
+  const [bankAccounts, users, approvalAuditLogs] = await Promise.all([
+    database.bankAccount.findMany({ where: { id: { in: bankAccountIds } }, select: { id: true, name: true } }),
+    userIds.length
+      ? database.user.findMany({ where: { id: { in: userIds } }, select: { id: true, fullName: true } })
+      : Promise.resolve([]),
+    database.auditLog.findMany({
+      where: {
+        organizationId: context.organizationId,
+        resourceType: "reconciliationRun",
+        action: "RECONCILIATION_RUN_APPROVED",
+        resourceId: { in: runIds },
+      },
+      select: { resourceId: true, metadata: true },
+    }),
+  ]);
 
-  return {
-    headers: [
-      "Reconciliation Run",
-      "Period Start",
-      "Period End",
-      "Status",
-      "Confirmed Matches",
-      "Rejected Matches",
-      "Removed Matches",
-      "Total Matches",
-      "Created At",
-      "Approved At",
-    ],
-    rows,
-  };
+  const bankAccountNamesById = new Map(bankAccounts.map((account) => [account.id, account.name]));
+  const userNamesById = new Map(users.map((user) => [user.id, user.fullName]));
+  const approvalAuditByRunId = new Map(approvalAuditLogs.map((entry) => [entry.resourceId, entry]));
+
+  const rows = await Promise.all(
+    runs.map(async (run) => {
+      const [tieOut, readiness, depositsWithdrawals, bankAdjustmentCount, ledgerAdjustmentCount] = await Promise.all([
+        calculateReconciliationTieOut({ reconciliationRunId: run.id }, context, database),
+        evaluateApprovalReadiness({ reconciliationRunId: run.id }, context, database),
+        database.transaction.aggregate({
+          where: {
+            organizationId: context.organizationId,
+            bankAccountId: run.bankAccountId,
+            sourceType: "BANK",
+            transactionDate: { gte: run.periodStart, lte: run.periodEnd },
+          },
+          _sum: { creditAmount: true, debitAmount: true },
+        }),
+        database.transactionAdjustment.count({
+          where: {
+            transaction: {
+              organizationId: context.organizationId,
+              bankAccountId: run.bankAccountId,
+              sourceType: "BANK",
+              transactionDate: { gte: run.periodStart, lte: run.periodEnd },
+            },
+          },
+        }),
+        database.transactionAdjustment.count({
+          where: {
+            transaction: {
+              organizationId: context.organizationId,
+              sourceType: "LEDGER",
+              transactionDate: { gte: run.periodStart, lte: run.periodEnd },
+            },
+          },
+        }),
+      ]);
+
+      const approvalAudit = approvalAuditByRunId.get(run.id);
+      const outstandingTransactions = readiness.unmatchedBankCount + readiness.unmatchedLedgerCount;
+      const adjustmentCount = bankAdjustmentCount + ledgerAdjustmentCount;
+
+      return [
+        run.organization.name,
+        bankAccountNamesById.get(run.bankAccountId) ?? run.bankAccountId,
+        formatDateOnly(run.periodStart),
+        formatDateOnly(run.periodEnd),
+        run.status,
+        userNamesById.get(run.createdBy) ?? run.createdBy,
+        run.approvedBy ? (userNamesById.get(run.approvedBy) ?? run.approvedBy) : "",
+        run.createdAt.toISOString(),
+        run.approvedAt ? run.approvedAt.toISOString() : "",
+        "0.00",
+        toDecimalString(depositsWithdrawals._sum.creditAmount),
+        toDecimalString(depositsWithdrawals._sum.debitAmount),
+        tieOut.bankTransactionTotal.toFixed(2),
+        tieOut.ledgerTransactionTotal.toFixed(2),
+        tieOut.variance.toFixed(2),
+        tieOut.matchedAmount.toFixed(2),
+        tieOut.unmatchedBankAmount.toFixed(2),
+        tieOut.unmatchedLedgerAmount.toFixed(2),
+        tieOut.exceptionAmount.toFixed(2),
+        String(readiness.exceptionCount),
+        String(outstandingTransactions),
+        String(adjustmentCount),
+        buildApprovalSummary(run, readiness.hasOutstandingItems, approvalAudit),
+      ];
+    }),
+  );
+
+  return { headers: financialReportHeaders, rows };
 }
 
 async function buildExceptionListTable(
@@ -268,7 +444,7 @@ export async function generateReportTable(
 
   switch (input.reportType) {
     case ReportType.RECONCILIATION_SUMMARY:
-      return buildReconciliationSummaryTable(input, context, database);
+      return buildFinancialReconciliationReportTable(input, context, database);
     case ReportType.EXCEPTION_LIST:
       return buildExceptionListTable(input, context, database);
     case ReportType.UNMATCHED_TRANSACTIONS:
