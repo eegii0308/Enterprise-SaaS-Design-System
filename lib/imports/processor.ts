@@ -1,10 +1,9 @@
-import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { ImportRowStatus, ImportStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
 import { buildImportRowSearchText, prepareImportRows } from "@/lib/imports/csv-core";
 import { didAcquireProcessingLock, getCompletedImportStatus, getImportSummary, isCompletedImportStatus, shouldCreateAuditEvent } from "@/lib/imports/processor-core";
-import { getImportStoragePath } from "@/lib/imports/storage";
+import { getImportFile } from "@/lib/imports/storage";
 
 type ImportProcessingSession = {
   organizationId: string;
@@ -183,7 +182,7 @@ export async function processImportBatch(importBatchId: string, session: ImportP
   });
 
   try {
-    const csvText = await readFile(getImportStoragePath(importBatch.fileStorageKey), "utf8");
+    const csvText = (await getImportFile(importBatch.fileStorageKey)).toString("utf8");
     const preparedImport = prepareImportRows(csvText, importBatch.sourceType, importBatch.id);
 
     await prisma.$transaction(async (tx) => {

@@ -1,31 +1,51 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
-import { getReportStoragePath } from "../lib/reports/storage.ts";
+import { getReportFile, putReportFile } from "../lib/reports/storage.ts";
 
-const expectedRoot = process.env.REPORT_UPLOAD_ROOT ?? path.join(process.cwd(), ".uploads");
+let testRoot: string;
 
-test("getReportStoragePath resolves a normal key under the storage root", () => {
-  const storagePath = getReportStoragePath("organizations/org-1/reports/report-1.csv");
-
-  assert.equal(storagePath, path.resolve(expectedRoot, "organizations/org-1/reports/report-1.csv"));
+test.before(async () => {
+  testRoot = await mkdtemp(path.join(tmpdir(), "reports-storage-test-"));
+  process.env.STORAGE_DRIVER = "local";
+  process.env.STORAGE_LOCAL_ROOT = testRoot;
 });
 
-test("getReportStoragePath normalizes backslashes in the key", () => {
-  const storagePath = getReportStoragePath("organizations\\org-1\\reports\\report-1.csv");
-
-  assert.equal(storagePath, path.resolve(expectedRoot, "organizations/org-1/reports/report-1.csv"));
+test.after(async () => {
+  if (testRoot) {
+    await rm(testRoot, { recursive: true, force: true });
+  }
 });
 
-test("getReportStoragePath rejects a key that escapes the storage root via ..", () => {
-  assert.throws(() => getReportStoragePath("../../etc/passwd"), /Invalid report storage key/);
+test("putReportFile writes a file that getReportFile reads back", async () => {
+  await putReportFile("organizations/org-1/reports/report-1.csv", "a,b,c\n1,2,3\n");
+
+  const buffer = await getReportFile("organizations/org-1/reports/report-1.csv");
+
+  assert.equal(buffer.toString("utf8"), "a,b,c\n1,2,3\n");
 });
 
-test("getReportStoragePath rejects a key that escapes the storage root via a nested ..", () => {
-  assert.throws(() => getReportStoragePath("organizations/org-1/../../../etc/passwd"), /Invalid report storage key/);
+test("putReportFile normalizes backslashes in the key", async () => {
+  await putReportFile("organizations\\org-1\\reports\\report-2.csv", "x,y\n1,2\n");
+
+  const buffer = await getReportFile("organizations/org-1/reports/report-2.csv");
+
+  assert.equal(buffer.toString("utf8"), "x,y\n1,2\n");
 });
 
-test("getReportStoragePath rejects an absolute path outside the storage root", () => {
-  const outsidePath = path.resolve(expectedRoot, "..", "outside.csv");
-  assert.throws(() => getReportStoragePath(outsidePath), /Invalid report storage key/);
+test("getReportFile rejects a key that escapes the storage root via ..", async () => {
+  await assert.rejects(() => getReportFile("../../etc/passwd"), /Invalid storage key/);
+});
+
+test("getReportFile rejects a key that escapes the storage root via a nested ..", async () => {
+  await assert.rejects(
+    () => getReportFile("organizations/org-1/../../../etc/passwd"),
+    /Invalid storage key/,
+  );
+});
+
+test("putReportFile rejects a key that escapes the storage root via ..", async () => {
+  await assert.rejects(() => putReportFile("../../etc/passwd", "data"), /Invalid storage key/);
 });

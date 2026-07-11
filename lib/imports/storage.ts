@@ -1,15 +1,9 @@
-import path from "node:path";
+import { getStorageProvider } from "@/lib/storage";
 
-const uploadRoot = process.env.IMPORT_UPLOAD_ROOT ?? path.join(process.cwd(), ".uploads");
+export async function putImportFile(fileStorageKey: string, data: Buffer): Promise<void> {
+  await getStorageProvider().putFile(fileStorageKey, data, "text/csv");
+}
 
-export function getImportStoragePath(fileStorageKey: string) {
-  const normalizedKey = fileStorageKey.replaceAll("\\", "/");
-  const storagePath = path.resolve(uploadRoot, normalizedKey);
-  const storageRoot = path.resolve(uploadRoot);
-
-  if (storagePath !== storageRoot && !storagePath.startsWith(`${storageRoot}${path.sep}`)) {
-    throw new Error("Invalid import storage key.");
-  }
-
-  return storagePath;
+export async function getImportFile(fileStorageKey: string): Promise<Buffer> {
+  return getStorageProvider().getFile(fileStorageKey);
 }

@@ -1,9 +1,8 @@
-import { readFile } from "node:fs/promises";
 import { NextResponse } from "next/server";
 import { Prisma, ReportStatus, ReportType } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
 import { requirePermission } from "@/lib/permissions/authorize";
-import { getReportStoragePath } from "@/lib/reports/storage";
+import { getReportFile } from "@/lib/reports/storage";
 import { buildReconciliationSummaryPresentation } from "@/lib/reports/render/reconciliation-summary";
 import { renderReconciliationSummaryPdf } from "@/lib/reports/exporters/pdf";
 import { renderReconciliationSummaryXlsx } from "@/lib/reports/exporters/xlsx";
@@ -67,8 +66,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ repo
         return NextResponse.json({ message: "Report export was not found." }, { status: 404 });
       }
 
-      const storagePath = getReportStoragePath(report.fileStorageKey);
-      fileBuffer = await readFile(storagePath);
+      fileBuffer = await getReportFile(report.fileStorageKey);
       fileName = `${baseFileName}.csv`;
     } else {
       // PDF/XLSX are rendered on demand from the current data (not a stored

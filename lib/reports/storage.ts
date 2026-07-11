@@ -1,15 +1,9 @@
-import path from "node:path";
+import { getStorageProvider } from "@/lib/storage";
 
-const uploadRoot = process.env.REPORT_UPLOAD_ROOT ?? path.join(process.cwd(), ".uploads");
+export async function putReportFile(fileStorageKey: string, data: Buffer | string): Promise<void> {
+  await getStorageProvider().putFile(fileStorageKey, data, "text/csv");
+}
 
-export function getReportStoragePath(fileStorageKey: string) {
-  const normalizedKey = fileStorageKey.replaceAll("\\", "/");
-  const storagePath = path.resolve(uploadRoot, normalizedKey);
-  const storageRoot = path.resolve(uploadRoot);
-
-  if (storagePath !== storageRoot && !storagePath.startsWith(`${storageRoot}${path.sep}`)) {
-    throw new Error("Invalid report storage key.");
-  }
-
-  return storagePath;
+export async function getReportFile(fileStorageKey: string): Promise<Buffer> {
+  return getStorageProvider().getFile(fileStorageKey);
 }

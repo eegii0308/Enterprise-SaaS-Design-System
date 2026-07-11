@@ -1,13 +1,11 @@
 "use server";
 
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { ImportStatus, Prisma, SourceType } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db/client";
 import { processImportBatch } from "@/lib/imports/processor";
-import { getImportStoragePath } from "@/lib/imports/storage";
+import { putImportFile } from "@/lib/imports/storage";
 import { requirePermission } from "@/lib/permissions/authorize";
 
 export type UploadImportState = {
@@ -64,10 +62,7 @@ export async function uploadImportAction(
   const fileStorageKey = `organizations/${session.organizationId}/imports/${fileHash}/${safeFileName}`;
 
   try {
-    const storagePath = getImportStoragePath(fileStorageKey);
-
-    await mkdir(path.dirname(storagePath), { recursive: true });
-    await writeFile(storagePath, fileBytes);
+    await putImportFile(fileStorageKey, fileBytes);
 
     const importBatch = await prisma.importBatch.create({
       data: {

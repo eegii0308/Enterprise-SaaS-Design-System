@@ -1,14 +1,12 @@
 "use server";
 
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { Prisma, ReportStatus, ReportType } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db/client";
 import { requirePermission } from "@/lib/permissions/authorize";
 import { generateReportTable, ReportGenerationError } from "@/lib/reports/generation";
 import { serializeReportTableToCsv } from "@/lib/reports/exporters/csv";
-import { getReportStoragePath } from "@/lib/reports/storage";
+import { putReportFile } from "@/lib/reports/storage";
 
 export type GenerateReportExportState =
   | {
@@ -81,10 +79,8 @@ export async function generateReportExportAction(input: GenerateReportExportInpu
 
     const csvText = serializeReportTableToCsv(table);
     const fileStorageKey = `organizations/${session.organizationId}/reports/${report.id}.csv`;
-    const storagePath = getReportStoragePath(fileStorageKey);
 
-    await mkdir(path.dirname(storagePath), { recursive: true });
-    await writeFile(storagePath, csvText, "utf8");
+    await putReportFile(fileStorageKey, csvText);
 
     await prisma.report.update({
       where: { id: report.id },
