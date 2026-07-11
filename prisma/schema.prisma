@@ -424,6 +424,20 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+model RateLimitAttempt {
+  id          String   @id @default(cuid())
+  scope       String
+  key         String
+  windowStart DateTime @map("window_start")
+  count       Int      @default(1)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([scope, key, windowStart])
+  @@index([windowStart])
+  @@map("rate_limit_attempts")
+}
+
 enum UserStatus {
   ACTIVE
   DISABLED

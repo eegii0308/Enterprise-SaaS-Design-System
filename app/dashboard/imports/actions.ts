@@ -7,6 +7,8 @@ import { prisma } from "@/lib/db/client";
 import { processImportBatch } from "@/lib/imports/processor";
 import { putImportFile } from "@/lib/imports/storage";
 import { requirePermission } from "@/lib/permissions/authorize";
+import { consume } from "@/lib/rate-limit/limiter";
+import { rateLimitConfig } from "@/lib/rate-limit/config";
 
 export type UploadImportState = {
   status: "idle" | "success" | "error";
@@ -37,6 +39,35 @@ export async function uploadImportAction(
   formData: FormData,
 ): Promise<UploadImportState> {
   const session = await requirePermission("imports.create");
+
+  // Checked before any file reading/hashing/storage/processing -- the most
+  // expensive parts of this action -- and before the per-org check, so a
+  // user hammering the endpoint never eats into their organization's shared
+  // budget just to be told they personally are throttled.
+  const userLimit = await consume(
+    { scope: "imports:upload:user", key: session.userId, ...rateLimitConfig.importUploadUser },
+    prisma,
+  );
+
+  if (!userLimit.allowed) {
+    return { status: "error", message: "You're uploading too quickly. Please wait a moment and try again." };
+  }
+
+  // Tenant-fairness guard: caps how much upload/processing load one
+  // organization can generate regardless of how many of its users are
+  // uploading, independent of the per-user limit above.
+  const orgLimit = await consume(
+    { scope: "imports:upload:org", key: session.organizationId, ...rateLimitConfig.importUploadOrg },
+    prisma,
+  );
+
+  if (!orgLimit.allowed) {
+    return {
+      status: "error",
+      message: "This organization has reached its upload limit for now. Please try again later.",
+    };
+  }
+
   const sourceType = formData.get("sourceType");
   const fileEntry = formData.get("file");
 

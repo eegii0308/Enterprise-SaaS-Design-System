@@ -40,7 +40,8 @@
       "invalidCredentials": "Email or password is incorrect.",
       "checkRegistration": "Check the registration form.",
       "firstOrganizationComplete": "First organization setup is already complete. Ask an Admin to create your membership.",
-      "adminRoleMissing": "Admin role was not created."
+      "adminRoleMissing": "Admin role was not created.",
+      "tooManyAttempts": "Too many attempts. Please wait and try again."
     },
     "validation": {
       "passwordMin": "Password must be at least 8 characters.",
